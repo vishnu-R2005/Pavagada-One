@@ -1,0 +1,2 @@
+import Link from "next/link";import {AuthForm} from "@/components/auth-form";
+export default function SignIn(){return <main className="grid min-h-screen place-items-center bg-stone-50 p-6"><section className="w-full max-w-md rounded-2xl bg-white p-7 shadow"><h1 className="text-2xl font-bold text-emerald-700">Pavagada One</h1><p className="mb-6 mt-1 text-stone-600">Create your customer account.</p><AuthForm register/><p className="mt-5 text-sm">Already have an account? <Link className="text-emerald-700" href="/sign-in">Sign in</Link></p></section></main>}

@@ -1,0 +1,11 @@
+{
+  "/api/admin/dashboard/route": "app/api/admin/dashboard/route.js",
+  "/api/admin/manage/route": "app/api/admin/manage/route.js",
+  "/api/merchant/shop/route": "app/api/merchant/shop/route.js",
+  "/api/merchant/orders/route": "app/api/merchant/orders/route.js",
+  "/api/merchant/products/route": "app/api/merchant/products/route.js",
+  "/api/merchant/dashboard/route": "app/api/merchant/dashboard/route.js",
+  "/api/catalog/route": "app/api/catalog/route.js",
+  "/merchant/page": "app/merchant/page.js",
+  "/admin/page": "app/admin/page.js"
+}

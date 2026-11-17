@@ -1,0 +1,13 @@
+"use client";
+
+import Link from "next/link";
+import {useRouter} from "next/navigation";
+import {useState} from "react";
+
+const areas=["Pavagada Town","Hirehalli","Kudligi Road","Nellikayannahatti","Other Area"];
+
+export default function ChooseLocation(){
+  const router=useRouter();const [selected,setSelected]=useState("Pavagada Town");
+  function confirm(){window.localStorage.setItem("pavagada_delivery_area",selected);router.replace("/customer");}
+  return <main className="min-h-screen bg-[#fff3e5] text-slate-900 md:p-6"><div className="mx-auto min-h-screen max-w-[480px] bg-[#fffdfa] pb-24 shadow-2xl shadow-orange-950/10 md:min-h-[820px] md:rounded-[2rem]"><header className="flex h-16 items-center justify-between px-5"><Link href="/customer" className="grid h-9 w-9 place-items-center rounded-full text-xl">‹</Link><h1 className="text-sm font-extrabold">Choose Location</h1><span className="w-9"/></header><div className="px-5"><label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-3 text-slate-400"><span>⌕</span><input placeholder="Search your area or pincode" className="w-full bg-transparent text-xs outline-none"/></label><section className="mt-4 grid h-32 place-items-center rounded-2xl bg-gradient-to-br from-emerald-50 to-orange-50"><div className="text-center"><span className="text-4xl">⌖</span><p className="mt-2 rounded-xl bg-white px-4 py-2 text-xs font-bold shadow-sm">{selected}<small className="ml-1 text-slate-500">Pavagada, Karnataka</small></p></div></section><button onClick={()=>navigator.geolocation?.getCurrentPosition(()=>setSelected("Current location"))} className="mt-4 flex w-full items-center gap-3 rounded-xl bg-white p-3 text-left text-xs font-bold shadow-sm ring-1 ring-slate-100"><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50 text-[#ff5b12]">⌖</span>Use my current location</button><p className="mt-5 text-xs text-slate-500">Or select from nearby areas</p><section className="mt-3 space-y-2">{areas.map(area=><button onClick={()=>setSelected(area)} key={area} className={`flex w-full items-center gap-3 rounded-xl bg-white p-3 text-left shadow-sm ring-1 ${selected===area?"ring-orange-300":"ring-slate-100"}`}><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50 text-[#ff5b12]">⌖</span><b className="flex-1 text-xs">{area}</b><span className="text-slate-400">›</span></button>)}</section></div><div className="fixed bottom-0 left-0 right-0 z-10 mx-auto max-w-[480px] bg-white p-4"><button onClick={confirm} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white">Confirm Location</button></div></div></main>;
+}

@@ -1,0 +1,16 @@
+"use client";
+
+import Link from "next/link";
+import {useEffect,useMemo,useState} from "react";
+import {CustomerNav} from "@/components/customer-nav";
+
+type Category={id:string;name:string};
+type Shop={id:string;name:string;address:string;image_url?:string|null};
+type Product={shop_id:string;category_id?:string|null};
+
+export default function Shops(){
+  const [shops,setShops]=useState<Shop[]>([]);const [categories,setCategories]=useState<Category[]>([]);const [products,setProducts]=useState<Product[]>([]);const [query,setQuery]=useState("");const [category,setCategory]=useState("");
+  useEffect(()=>{fetch("/api/catalog").then(response=>response.json()).then(data=>{setShops(data.shops??[]);setCategories(data.categories??[]);setProducts(data.products??[]);});},[]);
+  const visible=useMemo(()=>shops.filter(shop=>{const shopProducts=products.filter(product=>product.shop_id===shop.id);return (!query||shop.name.toLowerCase().includes(query.toLowerCase()))&&(!category||shopProducts.some(product=>product.category_id===category));}),[shops,products,query,category]);
+  return <main className="min-h-screen bg-[#fff3e5] text-slate-900 md:p-6"><div className="mx-auto min-h-screen max-w-[480px] bg-[#fffdfa] pb-20 shadow-2xl shadow-orange-950/10 md:min-h-[820px] md:rounded-[2rem]"><header className="flex h-16 items-center justify-between px-5"><Link href="/customer" className="grid h-9 w-9 place-items-center rounded-full text-xl">‹</Link><h1 className="text-sm font-extrabold">Shops</h1><span className="w-9"/></header><div className="px-5"><label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-3 text-slate-400"><span>⌕</span><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search shops..." className="w-full bg-transparent text-xs text-slate-700 outline-none"/></label></div><div className="scrollbar-none flex gap-2 overflow-x-auto px-5 py-4"><button onClick={()=>setCategory("")} className={`rounded-xl px-3.5 py-2 text-[11px] font-bold ${!category?"bg-[#ff5b12] text-white":"bg-slate-100 text-slate-600"}`}>All</button>{categories.map(item=><button key={item.id} onClick={()=>setCategory(item.id)} className={`whitespace-nowrap rounded-xl px-3.5 py-2 text-[11px] font-bold ${category===item.id?"bg-[#ff5b12] text-white":"bg-slate-100 text-slate-600"}`}>{item.name}</button>)}</div><section className="space-y-3 px-5">{visible.map(shop=><Link key={shop.id} href={`/customer/shops/${shop.id}`} className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">{shop.image_url?<img alt="" src={shop.image_url} className="h-16 w-16 rounded-xl object-cover"/>:<div className="grid h-16 w-16 place-items-center rounded-xl bg-gradient-to-br from-orange-100 to-lime-100 text-3xl">🏪</div>}<div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{shop.name}</p><p className="mt-1 truncate text-[10px] text-slate-500">{shop.address}</p><p className="mt-1 text-[10px] font-semibold text-slate-600">★ 4.5 &nbsp; ◷ 20–30 mins</p></div><span className="rounded-lg bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">Open</span></Link>)}{!visible.length&&<p className="rounded-2xl bg-white p-8 text-center text-sm text-slate-500">No shops match this search.</p>}</section><CustomerNav/></div></main>;
+}
