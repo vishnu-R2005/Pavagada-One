@@ -1,2 +1,43 @@
-@tailwind base; @tailwind components; @tailwind utilities;
-:root{color:#17211c;background:#f7f8f5}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif}button{cursor:pointer}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #1c1917;
+  background: #fafafa;
+  --brand-orange: #ff5a1f;
+  --brand-orange-hover: #e54910;
+  --brand-green: #15803d;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #fafafa;
+  color: #1c1917;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  cursor: pointer;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

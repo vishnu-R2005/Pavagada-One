@@ -1,138 +1,1051 @@
 "use client";
 
-import {FormEvent,useEffect,useMemo,useState} from "react";
-import {ProductImage,ProductImagePicker} from "@/components/product-image";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ChevronRight,
+  ClipboardList,
+  IndianRupee,
+  Package,
+  ShoppingBag,
+  Store,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { MerchantLogin } from "@/components/merchant/merchant-login";
+import {
+  MerchantBottomNav,
+  MerchantHeader,
+} from "@/components/merchant/merchant-nav";
+import { MerchantAnalytics } from "@/components/merchant/merchant-analytics";
+import {
+  MerchantOrderDetailView,
+  MerchantOrderStatusView,
+  MerchantOrdersList,
+} from "@/components/merchant/merchant-orders";
+import {
+  MerchantProductForm,
+  MerchantProductsList,
+} from "@/components/merchant/merchant-products";
+import {
+  MerchantEditShopForm,
+  MerchantMoreView,
+  MerchantNotificationsView,
+  MerchantProfileView,
+  MerchantSettingsView,
+  MerchantSupportView,
+} from "@/components/merchant/merchant-account";
+import type {
+  Category,
+  Dashboard,
+  MerchantNotification,
+  MerchantOrder,
+  MerchantPage,
+  OrderDetail,
+  Product,
+  Shop,
+} from "@/components/merchant/types";
+import {
+  calculateMerchantEarnings,
+  formatRupees,
+  getMerchantOrderLabel,
+} from "@/lib/merchant-ui";
+import { apiFetch } from "@/lib/client-session";
 
-type Product={id:string;name:string;description?:string|null;price_paise:number;quantity:number;unit?:string|null;image_url?:string|null;is_active:number;category_id?:string|null;category_name?:string|null;low_stock_threshold?:number};
-type MerchantOrder={id:string;order_no:string;status:string;total_paise:number;created_at:string;address_line?:string;landmark?:string|null;customer_name?:string;customer_phone?:string|null};
-type Shop={id:string;name:string;phone:string;address:string;is_open:number;is_approved:number;opening_hours?:string|null;delivery_available?:number;image_url?:string|null};
-type OrderDetail={order:MerchantOrder&{payment_method:string;payment_status:string;delivery_instructions?:string|null};items:{product_name:string;quantity:number;total_paise:number}[]};
-type Dashboard={sales:{today:{orders:number;revenue:number};week:{orders:number;revenue:number};month:{orders:number;revenue:number}};lowStock:Product[];recentOrders:MerchantOrder[];topProducts:{product_name:string;units:number;revenue:number}[];statusCounts:{status:string;count:number}[]};
-type Category={id:string;name:string};
-type Page="home"|"orders"|"products"|"analytics"|"more"|"profile"|"settings"|"product-form"|"order-detail"|"order-status";
+export default function MerchantPageView() {
+  const [shop, setShop] = useState<Shop | null>(null);
+  const [ownerName, setOwnerName] = useState("");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<MerchantOrder[]>([]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [notifications, setNotifications] = useState<MerchantNotification[]>(
+    []
+  );
 
-const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format((Number(value)||0)/100);
-const orderLabel=(status:string)=>({placed:"New",accepted:"Accepted",preparing:"Preparing",ready:"Ready",assigned:"Picked",out_for_delivery:"Out for delivery",delivered:"Delivered",cancelled:"Cancelled"}[status]??status);
-const productIcon=(name:string)=>{const value=name.toLowerCase();if(value.includes("milk")||value.includes("dairy"))return "🥛";if(value.includes("oil"))return "🫗";if(value.includes("salt")||value.includes("masala"))return "🧂";if(value.includes("atta")||value.includes("flour"))return "🌾";if(value.includes("noodle")||value.includes("maggi"))return "🍜";if(value.includes("fruit")||value.includes("veget"))return "🥬";return "🛍️"};
-const statusTone=(status:string)=>({placed:"bg-orange-100 text-orange-700",accepted:"bg-sky-100 text-sky-700",preparing:"bg-amber-100 text-amber-700",ready:"bg-emerald-100 text-emerald-700",assigned:"bg-violet-100 text-violet-700",out_for_delivery:"bg-violet-100 text-violet-700",delivered:"bg-emerald-100 text-emerald-700",cancelled:"bg-rose-100 text-rose-700"}[status]??"bg-slate-100 text-slate-700");
+  const [authRequired, setAuthRequired] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState<MerchantPage>("home");
+  const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [analyticsRange, setAnalyticsRange] = useState<
+    "today" | "week" | "month"
+  >("today");
 
-async function api<T>(url:string,init?:RequestInit):Promise<T>{
-  const response=await fetch(url,init);
-  const body=await response.json().catch(()=>({error:"The server returned an unreadable response."}));
-  if(!response.ok)throw new Error(body.error||"Something went wrong. Please try again.");
-  return body as T;
-}
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [savingForm, setSavingForm] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
 
-function Avatar({shop,size="normal"}:{shop:Shop;size?:"normal"|"small"}){
-  const dimensions=size==="small"?"h-11 w-11 text-xl":"h-14 w-14 text-2xl";
-  return shop.image_url?<img alt="Shop" src={shop.image_url} className={`${dimensions} shrink-0 rounded-2xl object-cover ring-2 ring-white`}/>:<div className={`${dimensions} grid shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-orange-100 to-amber-200 shadow-sm`}>🏪</div>;
-}
-function StatusPill({status}:{status:string}){return <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${statusTone(status)}`}>{orderLabel(status)}</span>}
-function NavButton({active,icon,label,onClick}:{active:boolean;icon:string;label:string;onClick:()=>void}){return <button onClick={onClick} className={`grid flex-1 place-items-center gap-1 py-2 text-[10px] font-semibold ${active?"text-[#ff5b12]":"text-slate-400"}`}><span className="text-lg leading-none">{icon}</span>{label}</button>}
-
-export default function MerchantCentre(){
-  const [shop,setShop]=useState<Shop|null>(null);
-  const [products,setProducts]=useState<Product[]>([]);
-  const [orders,setOrders]=useState<MerchantOrder[]>([]);
-  const [dashboard,setDashboard]=useState<Dashboard|null>(null);
-  const [categories,setCategories]=useState<Category[]>([]);
-  const [page,setPage]=useState<Page>("home");
-  const [previousPage,setPreviousPage]=useState<Page>("home");
-  const [selectedOrder,setSelectedOrder]=useState<OrderDetail|null>(null);
-  const [editing,setEditing]=useState<Product|null>(null);
-  const [orderFilter,setOrderFilter]=useState("placed");
-  const [productFilter,setProductFilter]=useState("all");
-  const [search,setSearch]=useState("");
-  const [analyticsRange,setAnalyticsRange]=useState<"today"|"week"|"month">("today");
-  const [notice,setNotice]=useState("");
-  const [error,setError]=useState("");
-  const [busy,setBusy]=useState(false);
-
-  async function load(){
+  const loadAll = useCallback(async () => {
     setError("");
-    try{
-      const [shopData,productData,orderData,dashboardData,catalogData]=await Promise.all([
-        api<{shop:Shop|null}>("/api/merchant/shop"),
-        api<{products:Product[]}>("/api/merchant/products"),
-        api<{orders:MerchantOrder[]}>("/api/merchant/orders"),
-        api<Dashboard>("/api/merchant/dashboard"),
-        api<{categories:Category[]}>("/api/catalog").catch(()=>({categories:[]})),
+    try {
+      const sessionRes = await apiFetch("/api/auth/session");
+      const sessionBody = await sessionRes.json().catch(() => ({}));
+      const sessionUser = sessionBody.user as
+        | { id: string; fullName: string; role: string }
+        | null
+        | undefined;
+
+      if (!sessionUser) {
+        setAuthRequired(true);
+        return;
+      }
+
+      if (sessionUser.role !== "merchant") {
+        setError(
+          `Forbidden: currently signed in as ${sessionUser.role}. Sign in with a Shop Partner account.`
+        );
+        setAuthRequired(true);
+        return;
+      }
+
+      setOwnerName(sessionUser.fullName || "");
+
+      const [shopRes, prodRes, ordersRes, dashRes, catRes, notifRes] =
+        await Promise.all([
+          apiFetch("/api/merchant/shop"),
+          apiFetch("/api/merchant/products"),
+          apiFetch("/api/merchant/orders"),
+          apiFetch("/api/merchant/dashboard"),
+          apiFetch("/api/catalog"),
+          apiFetch("/api/notifications"),
+        ]);
+
+      if (shopRes.status === 401 || shopRes.status === 403) {
+        setAuthRequired(true);
+        return;
+      }
+
+      if (!shopRes.ok) {
+        const body = await shopRes.json().catch(() => ({}));
+        throw new Error(body.error || "Unable to load shop data.");
+      }
+
+      setAuthRequired(false);
+
+      const [
+        shopBody,
+        prodBody,
+        ordersBody,
+        dashBody,
+        catBody,
+        notifBody,
+      ] = await Promise.all([
+        shopRes.json().catch(() => ({})),
+        prodRes.json().catch(() => ({})),
+        ordersRes.json().catch(() => ({})),
+        dashRes.json().catch(() => ({})),
+        catRes.json().catch(() => ({})),
+        notifRes.json().catch(() => ({})),
       ]);
-      if(!shopData.shop){setError("Your merchant account does not have a shop yet. Ask an administrator to approve your shop application.");return;}
-      setShop(shopData.shop);setProducts(productData.products??[]);setOrders(orderData.orders??[]);setDashboard(dashboardData);setCategories(catalogData.categories??[]);
-    }catch(e){setError(e instanceof Error?e.message:"Unable to load the merchant workspace.");}
+
+      setShop(shopBody.shop ?? null);
+      setProducts(prodBody.products ?? []);
+      setOrders(ordersBody.orders ?? []);
+      setDashboard(dashBody.sales ? dashBody : null);
+      setCategories(catBody.categories ?? []);
+      setNotifications(notifBody.notifications ?? []);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to load merchant portal."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  const activeMain: "home" | "orders" | "products" | "analytics" | "more" =
+    useMemo(() => {
+      if (page === "orders" || page === "order-detail" || page === "order-status")
+        return "orders";
+      if (page === "products" || page === "product-form") return "products";
+      if (page === "analytics") return "analytics";
+      if (
+        page === "more" ||
+        page === "profile" ||
+        page === "edit-profile" ||
+        page === "settings" ||
+        page === "notifications" ||
+        page === "support"
+      )
+        return "more";
+      return "home";
+    }, [page]);
+
+  const newOrderCount = useMemo(
+    () => orders.filter((o) => o.status === "placed").length,
+    [orders]
+  );
+
+  const unreadNotifications = useMemo(
+    () => notifications.filter((n) => !n.read_at).length,
+    [notifications]
+  );
+
+  function flash(msg: string) {
+    setError("");
+    setNotice(msg);
   }
-  useEffect(()=>{void load();},[]);
 
-  function go(next:Page){setPreviousPage(page);setPage(next);setSearch("");}
-  function back(){setPage(previousPage);setSelectedOrder(null);setEditing(null);}
-  async function run(work:()=>Promise<void>){setBusy(true);setError("");try{await work();}catch(e){setError(e instanceof Error?e.message:"Something went wrong.");}finally{setBusy(false);}}
-  async function changeShopStatus(){if(!shop)return;await run(async()=>{await api("/api/merchant/shop",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({name:shop.name,address:shop.address,phone:shop.phone,isOpen:!Boolean(shop.is_open),openingHours:shop.opening_hours??"",deliveryAvailable:Boolean(shop.delivery_available),imageUrl:shop.image_url??null})});setNotice(`Shop is now ${shop.is_open?"closed":"open"}.`);await load();});}
-  async function saveShop(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!shop)return;const f=new FormData(event.currentTarget);await run(async()=>{await api("/api/merchant/shop",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({name:String(f.get("name")||""),phone:String(f.get("phone")||""),address:String(f.get("address")||""),openingHours:String(f.get("hours")||""),isOpen:f.get("isOpen")==="on",deliveryAvailable:f.get("delivery")==="on",imageUrl:String(f.get("imageUrl")||"")||null})});setNotice("Shop profile saved.");await load();setPage("profile");});}
-  async function saveProduct(event:FormEvent<HTMLFormElement>){event.preventDefault();const f=new FormData(event.currentTarget);await run(async()=>{const payload={name:String(f.get("name")||""),pricePaise:Math.round(Number(f.get("price")||0)*100),stock:Number(f.get("stock")||0),lowStockThreshold:Number(f.get("lowStockThreshold")||0),unit:String(f.get("unit")||"")||null,description:String(f.get("description")||""),categoryId:String(f.get("categoryId")||"")||null,imageUrl:String(f.get("imageUrl")||"")||null,isActive:f.get("active")==="on"};if(editing){await api(`/api/merchant/products/${editing.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});setNotice("Product updated.");}else{await api("/api/merchant/products",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});setNotice("Product added to your catalogue.");}await load();setEditing(null);setPage("products");});}
-  async function toggleProduct(product:Product){await run(async()=>{await api(`/api/merchant/products/${product.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({name:product.name,pricePaise:Number(product.price_paise),stock:Number(product.quantity),lowStockThreshold:Number(product.low_stock_threshold??5),unit:product.unit??null,categoryId:product.category_id??null,description:product.description??"",imageUrl:product.image_url??null,isActive:!Boolean(product.is_active)})});setNotice(`${product.name} is now ${product.is_active?"hidden":"available"}.`);await load();});}
-  async function openOrder(id:string,from:Page="orders"){await run(async()=>{const result=await api<OrderDetail>(`/api/merchant/orders/${id}`);setPreviousPage(from);setSelectedOrder(result);setPage("order-detail");});}
-  async function updateOrder(status:"accepted"|"preparing"|"ready"|"cancelled",note?:string){if(!selectedOrder)return;await run(async()=>{await api(`/api/merchant/orders/${selectedOrder.order.id}/status`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status,note})});const refreshed=await api<OrderDetail>(`/api/merchant/orders/${selectedOrder.order.id}`);setSelectedOrder(refreshed);setNotice(`Order ${orderLabel(status).toLowerCase()}. The customer has been notified.`);await load();if(status==="cancelled")setPage("orders");});}
-  async function rejectOrder(){const reason=window.prompt("Reason for rejecting this order (shown to the customer):");if(reason===null)return;await updateOrder("cancelled",reason||"Unable to fulfil this order.");}
-  async function logout(){await run(async()=>{await api("/api/auth/logout",{method:"POST"});window.location.assign("/sign-in");});}
+  async function toggleShopOpen() {
+    if (!shop) return;
+    setBusyId("shop-open");
+    try {
+      const nextOpen = !Boolean(shop.is_open);
+      const res = await apiFetch("/api/merchant/shop", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: shop.name,
+          phone: shop.phone,
+          address: shop.address,
+          isOpen: nextOpen,
+          openingHours: shop.opening_hours || undefined,
+          deliveryAvailable: shop.delivery_available !== 0,
+          imageUrl: shop.image_url || undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to update shop status.");
+      flash(nextOpen ? "Shop is now Open for orders." : "Shop is paused.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update shop.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
-  const filteredOrders=useMemo(()=>orders.filter(order=>{
-    const matchesStatus=order.status===orderFilter||(orderFilter==="completed"&&order.status==="delivered");
-    const needle=search.toLowerCase();
-    const matchesSearch=!needle||order.order_no.toLowerCase().includes(needle)||(order.customer_name??"").toLowerCase().includes(needle);
-    return matchesStatus&&matchesSearch;
-  }),[orders,orderFilter,search]);
-  const filteredProducts=useMemo(()=>products.filter(product=>{
-    const matchesFilter=productFilter==="all"||(productFilter==="in"&&product.quantity>0&&product.is_active)||(productFilter==="out"&&(!product.quantity||!product.is_active));
-    return matchesFilter&&product.name.toLowerCase().includes(search.toLowerCase());
-  }),[products,productFilter,search]);
-  const newOrders=orders.filter(order=>order.status==="placed").length;
-  const activeMain=page==="home"?"home":page==="orders"?"orders":page==="products"||page==="product-form"?"products":page==="analytics"?"analytics":"more";
+  async function toggleDelivery() {
+    if (!shop) return;
+    setBusyId("shop-delivery");
+    try {
+      const nextDelivery = shop.delivery_available === 0;
+      const res = await apiFetch("/api/merchant/shop", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: shop.name,
+          phone: shop.phone,
+          address: shop.address,
+          isOpen: Boolean(shop.is_open),
+          openingHours: shop.opening_hours || undefined,
+          deliveryAvailable: nextDelivery,
+          imageUrl: shop.image_url || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error("Unable to update delivery setting.");
+      flash(
+        nextDelivery
+          ? "Local rider delivery enabled."
+          : "Switched to pickup only."
+      );
+      await loadAll();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to update delivery."
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
 
-  if(!shop)return <main className="grid min-h-screen place-items-center bg-[#fff8f1] px-5 text-center"><div className="max-w-sm rounded-[2rem] bg-white p-8 shadow-xl shadow-orange-950/10"><div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-orange-100 text-3xl">🏪</div><h1 className="mt-5 text-xl font-extrabold">Merchant centre</h1><p className="mt-2 text-sm text-slate-600">{error||"Loading your shop…"}</p><button onClick={()=>void load()} className="mt-5 rounded-xl bg-[#ff5b12] px-5 py-3 text-sm font-bold text-white">Try again</button>{error?.toLowerCase().includes("forbidden")&&<button onClick={()=>void logout()} className="mt-3 text-sm font-bold text-[#ff5b12] underline underline-offset-4">Sign out and switch account</button>}</div></main>;
+  async function saveShopProfile(payload: {
+    name: string;
+    phone: string;
+    address: string;
+    openingHours?: string;
+    isOpen: boolean;
+    deliveryAvailable: boolean;
+    imageUrl?: string | null;
+  }) {
+    setSavingForm(true);
+    setError("");
+    try {
+      const res = await apiFetch("/api/merchant/shop", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to save shop profile.");
+      flash("Shop profile saved.");
+      setPage("profile");
+      await loadAll();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to save shop profile."
+      );
+    } finally {
+      setSavingForm(false);
+    }
+  }
 
-  const content=()=>{
-    if(page==="home")return <Home shop={shop} dashboard={dashboard} newOrders={newOrders} onToggle={()=>void changeShopStatus()} onGo={go} onOrder={id=>void openOrder(id,"home")}/>;
-    if(page==="orders")return <Orders orders={filteredOrders} filter={orderFilter} search={search} onFilter={setOrderFilter} onSearch={setSearch} onOrder={id=>void openOrder(id,"orders")}/>;
-    if(page==="products")return <Products products={filteredProducts} filter={productFilter} search={search} onFilter={setProductFilter} onSearch={setSearch} onAdd={()=>{setEditing(null);go("product-form");}} onEdit={product=>{setEditing(product);go("product-form");}} onToggle={product=>void toggleProduct(product)}/>;
-    if(page==="product-form")return <ProductForm product={editing} categories={categories} busy={busy} onBack={back} onSave={saveProduct}/>;
-    if(page==="order-detail"&&selectedOrder)return <OrderDetails detail={selectedOrder} onBack={back} onAccept={()=>void updateOrder("accepted")} onReject={()=>void rejectOrder()} onUpdate={()=>go("order-status")}/>;
-    if(page==="order-status"&&selectedOrder)return <OrderStatus detail={selectedOrder} busy={busy} onBack={back} onStatus={status=>void updateOrder(status)}/>;
-    if(page==="analytics")return <Analytics dashboard={dashboard} range={analyticsRange} onRange={setAnalyticsRange}/>;
-    if(page==="profile")return <ShopProfile shop={shop} onBack={back} onEdit={()=>go("settings")}/>;
-    if(page==="settings")return <ShopSettings shop={shop} busy={busy} onBack={back} onSave={saveShop}/>;
-    return <More shop={shop} onGo={go} onLogout={()=>void logout()}/>;
-  };
+  async function openOrder(
+    orderId: string,
+    target: "detail" | "status" = "detail"
+  ) {
+    setBusyId(orderId);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/merchant/orders/${orderId}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to load order.");
+      setDetail(body);
+      setPage(target === "status" ? "order-status" : "order-detail");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load order.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
-  return <main className="min-h-screen bg-[#fff3e5] text-slate-900 md:p-6"><div className="mx-auto min-h-screen max-w-[480px] overflow-hidden bg-[#fffdfa] shadow-2xl shadow-orange-950/10 md:min-h-[820px] md:rounded-[2rem]">{notice&&<button onClick={()=>setNotice("")} className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 rounded-2xl bg-emerald-700 px-4 py-3 text-left text-sm font-semibold text-white shadow-lg">✓ {notice}</button>}{error&&<button onClick={()=>setError("")} className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 rounded-2xl bg-rose-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-lg">{error}</button>}<div className="min-h-[calc(100vh-68px)] pb-20 md:min-h-[752px]">{content()}</div>{["home","orders","products","analytics","more"].includes(page)&&<nav className="sticky bottom-0 z-30 flex border-t border-slate-100 bg-white/95 px-2 backdrop-blur"><NavButton active={activeMain==="home"} icon="⌂" label="Home" onClick={()=>setPage("home")}/><NavButton active={activeMain==="orders"} icon="▣" label="Orders" onClick={()=>setPage("orders")}/><NavButton active={activeMain==="products"} icon="▤" label="Products" onClick={()=>setPage("products")}/><NavButton active={activeMain==="analytics"} icon="▥" label="Analytics" onClick={()=>setPage("analytics")}/><NavButton active={activeMain==="more"} icon="☷" label="More" onClick={()=>setPage("more")}/></nav>}</div></main>;
+  async function updateOrderStatus(
+    orderId: string,
+    nextStatus: string,
+    stayOnStatusView = false
+  ) {
+    setBusyId(orderId);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/merchant/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to update order.");
+      flash(`Order updated to ${getMerchantOrderLabel(nextStatus)}.`);
+      await loadAll();
+      if (detail?.order.id === orderId || stayOnStatusView) {
+        const refreshed = await apiFetch(`/api/merchant/orders/${orderId}`);
+        if (refreshed.ok) {
+          setDetail(await refreshed.json());
+          if (stayOnStatusView) setPage("order-status");
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update order.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleAcceptAndTrack(orderId: string) {
+    await updateOrderStatus(orderId, "accepted", true);
+  }
+
+  async function toggleProductActive(product: Product) {
+    setBusyId(product.id);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/merchant/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: product.name,
+          categoryId: product.category_id ?? null,
+          description: product.description ?? undefined,
+          pricePaise: product.price_paise,
+          stock: product.quantity,
+          lowStockThreshold: product.low_stock_threshold ?? 5,
+          unit: product.unit ?? null,
+          imageUrl: product.image_url ?? null,
+          isActive: !product.is_active,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to update product.");
+      flash(
+        product.is_active
+          ? `${product.name} marked out of stock.`
+          : `${product.name} is now in stock.`
+      );
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update product.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveProduct(payload: {
+    name: string;
+    categoryId: string | null;
+    pricePaise: number;
+    stock: number;
+    lowStockThreshold: number;
+    unit: string | null;
+    description?: string;
+    imageUrl?: string | null;
+    isActive: boolean;
+  }) {
+    setSavingForm(true);
+    setError("");
+    try {
+      const targetUrl = editingProduct
+        ? `/api/merchant/products/${editingProduct.id}`
+        : "/api/merchant/products";
+      const method = editingProduct ? "PATCH" : "POST";
+
+      const res = await apiFetch(targetUrl, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to save product.");
+
+      if (!editingProduct && !payload.isActive && body.id) {
+        await apiFetch(`/api/merchant/products/${body.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      flash(
+        editingProduct
+          ? "Product updated successfully."
+          : "New product added to your storefront."
+      );
+      setEditingProduct(null);
+      setPage("products");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save product.");
+    } finally {
+      setSavingForm(false);
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    await apiFetch("/api/notifications", { method: "PATCH" });
+    await loadAll();
+  }
+
+  async function submitSupportTicket(subject: string, detailText: string) {
+    setSavingForm(true);
+    setError("");
+    try {
+      const res = await apiFetch("/api/support", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "support",
+          subject,
+          detail: detailText,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to send ticket.");
+      flash("Support ticket submitted to Pavagada One operations.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to submit support ticket."
+      );
+    } finally {
+      setSavingForm(false);
+    }
+  }
+
+  async function logout() {
+    await apiFetch("/api/auth/logout", { method: "POST" });
+    setShop(null);
+    setAuthRequired(true);
+    setPage("home");
+  }
+
+  function handleBack() {
+    if (page === "order-status") setPage("order-detail");
+    else if (page === "order-detail") setPage("orders");
+    else if (page === "product-form") setPage("products");
+    else if (page === "edit-profile") setPage("profile");
+    else if (
+      page === "profile" ||
+      page === "settings" ||
+      page === "notifications" ||
+      page === "support"
+    )
+      setPage("more");
+    else setPage("home");
+  }
+
+  if (loading) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#FAFAFA] p-6">
+        <div className="space-y-3 text-center">
+          <div className="mx-auto h-12 w-12 animate-pulse rounded-2xl bg-[#FFF3EE]" />
+          <p className="text-sm font-semibold text-stone-500">
+            Loading Shop Partner Portal…
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  if (authRequired) {
+    return (
+      <MerchantLogin
+        errorMessage={error || undefined}
+        onSignedIn={() => {
+          setLoading(true);
+          void loadAll();
+        }}
+        onSwitchAccount={() => void logout()}
+      />
+    );
+  }
+
+  if (!shop) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#FAFAFA] p-6">
+        <div className="w-full max-w-md rounded-3xl border border-stone-200 bg-white p-6 text-center shadow-sm space-y-4">
+          <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#FFF3EE] text-[#FF5A1F]">
+            <Store className="h-7 w-7" />
+          </span>
+          <h1 className="font-display text-xl font-bold text-stone-900">
+            No Shop Assigned Yet
+          </h1>
+          <p className="text-xs leading-relaxed text-stone-500">
+            Your merchant account is active, but no storefront is linked yet.
+            Contact Pavagada One Admin or switch to the demo Shop Partner account.
+          </p>
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="min-h-[46px] w-full rounded-xl bg-[#FF5A1F] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#E54910]"
+          >
+            Sign Out &amp; Switch Account
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  const todayStats = dashboard?.sales.today ?? { orders: 0, revenue: 0 };
+  const todayEarnings = calculateMerchantEarnings(Number(todayStats.revenue));
+  const todayDateString = new Date().toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] pb-24 text-stone-900 md:pb-12">
+      <MerchantHeader
+        shop={shop}
+        page={page}
+        activeMain={activeMain}
+        newOrderCount={newOrderCount}
+        unreadNotifications={unreadNotifications}
+        isEditingProduct={Boolean(editingProduct)}
+        onNavigate={(next) => {
+          setNotice("");
+          setPage(next);
+        }}
+        onBack={handleBack}
+        onToggleShopStatus={() => void toggleShopOpen()}
+      />
+
+      <main className="mx-auto max-w-6xl px-4 py-5 md:px-8 md:py-7">
+        {/* Feedback Banners */}
+        {notice && (
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-[#BBF7D0] bg-[#EAF7EE] px-4 py-2.5 text-xs font-semibold text-[#15803D]">
+            <span>{notice}</span>
+            <button
+              type="button"
+              onClick={() => setNotice("")}
+              className="ml-3 text-[11px] font-bold underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {error && (
+          <div className="mb-4 flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError("")}
+              className="ml-3 text-[11px] font-bold underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* SCREEN 2: MERCHANT HOME */}
+        {page === "home" && (
+          <div className="space-y-5">
+            {/* Mint-Green Shop Open Switch Banner (Screen 2) */}
+            <section
+              className={`flex items-center justify-between gap-4 rounded-2xl border p-4 shadow-xs transition-colors ${
+                shop.is_open
+                  ? "border-[#BBF7D0] bg-[#DCFCE7]"
+                  : "border-stone-200 bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <span
+                  className={`grid h-11 w-11 place-items-center rounded-xl shrink-0 ${
+                    shop.is_open
+                      ? "bg-[#15803D] text-white"
+                      : "bg-stone-100 text-stone-500"
+                  }`}
+                >
+                  <Store className="h-5 w-5" />
+                </span>
+                <div>
+                  <p
+                    className={`text-sm font-extrabold ${
+                      shop.is_open ? "text-[#14532D]" : "text-stone-900"
+                    }`}
+                  >
+                    {shop.is_open ? "Shop is Open" : "Shop is Paused"}
+                  </p>
+                  <p
+                    className={`text-xs font-medium ${
+                      shop.is_open ? "text-[#166534]" : "text-stone-500"
+                    }`}
+                  >
+                    {shop.is_open
+                      ? "You will receive new orders"
+                      : "Customers see your shop as temporarily closed"}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(shop.is_open)}
+                aria-label="Toggle Shop Open Status"
+                disabled={busyId === "shop-open"}
+                onClick={() => void toggleShopOpen()}
+                className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full transition-colors ${
+                  shop.is_open ? "bg-[#15803D]" : "bg-stone-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-sm transition-transform ${
+                    shop.is_open ? "translate-x-7" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </section>
+
+            {/* Date + View Analytics Header */}
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-stone-600">
+                Today, {todayDateString}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage("analytics")}
+                className="inline-flex items-center gap-0.5 font-bold text-[#FF5A1F] hover:underline"
+              >
+                View Analytics
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* 2x2 Pastel Metric Tiles (4-column on lg desktop) */}
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <button
+                type="button"
+                onClick={() => setPage("orders")}
+                className="flex items-center gap-3 rounded-2xl border border-[#FED7AA] bg-[#FFF4EC] p-4 text-left shadow-xs transition hover:border-[#FF5A1F]/40"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#FF5A1F] text-white shrink-0">
+                  <ShoppingBag className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                    {newOrderCount}
+                  </p>
+                  <p className="truncate text-xs font-semibold text-stone-600">
+                    New Orders
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPage("orders")}
+                className="flex items-center gap-3 rounded-2xl border border-[#BBF7D0] bg-[#ECFDF3] p-4 text-left shadow-xs transition hover:border-[#15803D]/40"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#15803D] text-white shrink-0">
+                  <Package className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                    {todayStats.orders}
+                  </p>
+                  <p className="truncate text-xs font-semibold text-stone-600">
+                    Today&apos;s Orders
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPage("analytics")}
+                className="flex items-center gap-3 rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] p-4 text-left shadow-xs transition hover:border-blue-400"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#2563EB] text-white shrink-0">
+                  <IndianRupee className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                    {formatRupees(Number(todayStats.revenue))}
+                  </p>
+                  <p className="truncate text-xs font-semibold text-stone-600">
+                    Today&apos;s Sales
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPage("analytics")}
+                className="flex items-center gap-3 rounded-2xl border border-[#DDD6FE] bg-[#F5F3FF] p-4 text-left shadow-xs transition hover:border-purple-400"
+              >
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#7C3AED] text-white shrink-0">
+                  <Wallet className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                    {formatRupees(todayEarnings.netEarnings)}
+                  </p>
+                  <p className="truncate text-xs font-semibold text-stone-600">
+                    Your Earnings
+                  </p>
+                </div>
+              </button>
+            </section>
+
+            {/* 4 Quick Action Tiles */}
+            <section className="grid grid-cols-4 gap-2.5 sm:gap-4">
+              {(
+                [
+                  {
+                    label: "Products",
+                    icon: Package,
+                    bg: "bg-[#FFF3EE] text-[#FF5A1F]",
+                    onClick: () => setPage("products"),
+                  },
+                  {
+                    label: "Orders",
+                    icon: ClipboardList,
+                    bg: "bg-[#EFF6FF] text-[#2563EB]",
+                    onClick: () => setPage("orders"),
+                  },
+                  {
+                    label: "Earnings",
+                    icon: TrendingUp,
+                    bg: "bg-[#ECFDF3] text-[#15803D]",
+                    onClick: () => setPage("analytics"),
+                  },
+                  {
+                    label: "Edit Shop",
+                    icon: Store,
+                    bg: "bg-[#F5F3FF] text-[#7C3AED]",
+                    onClick: () => setPage("profile"),
+                  },
+                ] as const
+              ).map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={action.onClick}
+                    className="flex flex-col items-center gap-2 rounded-2xl border border-stone-200 bg-white p-3.5 text-center shadow-xs transition hover:border-[#FF5A1F]/40"
+                  >
+                    <span
+                      className={`grid h-11 w-11 place-items-center rounded-xl ${action.bg}`}
+                    >
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="text-[11px] font-bold text-stone-700 sm:text-xs">
+                      {action.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </section>
+
+            {/* Recent Orders + Low-Stock Alerts */}
+            <div className="grid gap-5 lg:grid-cols-12">
+              <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-7">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-stone-900">
+                    Recent Orders
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setPage("orders")}
+                    className="inline-flex items-center gap-0.5 text-xs font-bold text-[#FF5A1F] hover:underline"
+                  >
+                    View All
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="mt-3 divide-y divide-stone-100">
+                  {orders.slice(0, 5).map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => void openOrder(o.id, "detail")}
+                      className="flex w-full items-center justify-between gap-3 py-3 text-left transition hover:bg-stone-50/70 rounded-xl px-2 -mx-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-stone-900">
+                          #{o.order_no}
+                        </p>
+                        <p className="truncate text-[11px] text-stone-500">
+                          {o.customer_name || "Customer"} ·{" "}
+                          {o.items?.length
+                            ? `${o.items.length} ${
+                                o.items.length === 1 ? "item" : "items"
+                              }`
+                            : "Order"}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="tabular-nums text-xs font-extrabold text-stone-900">
+                          {formatRupees(o.total_paise)}
+                        </p>
+                        <span
+                          className={`mt-0.5 inline-block rounded px-2 py-0.5 text-[10px] font-bold ${
+                            o.status === "placed"
+                              ? "bg-[#FFF3EE] text-[#FF5A1F]"
+                              : o.status === "ready" || o.status === "delivered"
+                                ? "bg-[#EAF7EE] text-[#15803D]"
+                                : o.status === "cancelled"
+                                  ? "bg-rose-50 text-rose-700"
+                                  : "bg-[#EFF6FF] text-[#2563EB]"
+                          }`}
+                        >
+                          {getMerchantOrderLabel(o.status)}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                  {orders.length === 0 && (
+                    <p className="py-6 text-center text-xs text-stone-500">
+                      No orders yet. Keep your shop Open to start receiving
+                      orders.
+                    </p>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="flex items-center gap-2 text-sm font-bold text-stone-900">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    Low-Stock Alerts
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setPage("products")}
+                    className="text-xs font-bold text-[#FF5A1F] hover:underline"
+                  >
+                    Catalog
+                  </button>
+                </div>
+
+                <div className="mt-3 divide-y divide-stone-100">
+                  {dashboard?.lowStock?.length ? (
+                    dashboard.lowStock.map((low) => {
+                      const match = products.find((p) => p.id === low.id);
+                      return (
+                        <div
+                          key={low.id}
+                          className="flex items-center justify-between gap-2 py-2.5 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-stone-900">
+                              {low.name}
+                            </p>
+                            <p className="text-[11px] text-amber-700">
+                              {low.quantity} left (alert at{" "}
+                              {low.low_stock_threshold ?? 5})
+                            </p>
+                          </div>
+                          {match && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingProduct(match);
+                                setPage("product-form");
+                              }}
+                              className="rounded-lg border border-[#FF5A1F]/40 bg-[#FFF8F5] px-2.5 py-1.5 text-[11px] font-bold text-[#FF5A1F] hover:bg-[#FFF3EE]"
+                            >
+                              Restock
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="py-6 text-center text-xs text-[#15803D] font-medium">
+                      All storefront items are well stocked.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 3: ORDERS LIST */}
+        {page === "orders" && (
+          <MerchantOrdersList
+            orders={orders}
+            busyId={busyId}
+            onSelectOrder={(orderId, view) => void openOrder(orderId, view)}
+            onStatusChange={(orderId, nextStatus) =>
+              void updateOrderStatus(orderId, nextStatus)
+            }
+            onAcceptAndTrack={(orderId) => void handleAcceptAndTrack(orderId)}
+          />
+        )}
+
+        {/* SCREEN 4: ORDER DETAILS */}
+        {page === "order-detail" && detail && (
+          <MerchantOrderDetailView
+            detail={detail}
+            shop={shop}
+            busyId={busyId}
+            onAcceptAndTrack={(orderId) => void handleAcceptAndTrack(orderId)}
+            onStatusChange={(orderId, nextStatus) =>
+              void updateOrderStatus(orderId, nextStatus)
+            }
+            onOpenStatusFlow={() => setPage("order-status")}
+          />
+        )}
+
+        {/* SCREEN 5: UPDATE ORDER STATUS */}
+        {page === "order-status" && detail && (
+          <MerchantOrderStatusView
+            detail={detail}
+            busyId={busyId}
+            onStatusChange={(orderId, nextStatus) =>
+              void updateOrderStatus(orderId, nextStatus, true)
+            }
+            onViewDetails={() => setPage("order-detail")}
+          />
+        )}
+
+        {/* SCREEN 6: PRODUCTS LIST */}
+        {page === "products" && (
+          <MerchantProductsList
+            products={products}
+            onAddNew={() => {
+              setEditingProduct(null);
+              setPage("product-form");
+            }}
+            onEdit={(prod) => {
+              setEditingProduct(prod);
+              setPage("product-form");
+            }}
+            onToggleActive={(prod) => void toggleProductActive(prod)}
+          />
+        )}
+
+        {/* SCREEN 7: ADD / EDIT PRODUCT */}
+        {page === "product-form" && (
+          <MerchantProductForm
+            editingProduct={editingProduct}
+            categories={categories}
+            busy={savingForm}
+            onSave={saveProduct}
+            onCancel={() => {
+              setEditingProduct(null);
+              setPage("products");
+            }}
+          />
+        )}
+
+        {/* SCREEN 9: EARNINGS & ANALYTICS */}
+        {page === "analytics" && (
+          <MerchantAnalytics
+            dashboard={dashboard}
+            orders={orders}
+            range={analyticsRange}
+            onChangeRange={setAnalyticsRange}
+          />
+        )}
+
+        {/* SCREEN 8: SHOP PROFILE */}
+        {page === "profile" && (
+          <MerchantProfileView
+            shop={shop}
+            ownerName={ownerName}
+            onEdit={() => setPage("edit-profile")}
+          />
+        )}
+
+        {page === "edit-profile" && (
+          <MerchantEditShopForm
+            shop={shop}
+            busy={savingForm}
+            onSave={saveShopProfile}
+            onCancel={() => setPage("profile")}
+          />
+        )}
+
+        {/* SCREEN 10: SHOP SETTINGS */}
+        {page === "settings" && (
+          <MerchantSettingsView
+            shop={shop}
+            onNavigate={setPage}
+            onToggleDelivery={() => void toggleDelivery()}
+          />
+        )}
+
+        {/* SCREEN 11: MORE MENU */}
+        {page === "more" && (
+          <MerchantMoreView
+            shop={shop}
+            onNavigate={setPage}
+            onLogout={() => void logout()}
+          />
+        )}
+
+        {page === "notifications" && (
+          <MerchantNotificationsView
+            notifications={notifications}
+            onMarkAllRead={() => void markAllNotificationsRead()}
+          />
+        )}
+
+        {page === "support" && (
+          <MerchantSupportView
+            busy={savingForm}
+            onSubmitTicket={submitSupportTicket}
+          />
+        )}
+      </main>
+
+      <MerchantBottomNav
+        activeMain={activeMain}
+        newOrderCount={newOrderCount}
+        onNavigate={(next) => {
+          setNotice("");
+          setPage(next);
+        }}
+      />
+    </div>
+  );
 }
-
-function Header({title,onBack,right}:{title:string;onBack?:()=>void;right?:React.ReactNode}){return <header className="flex h-16 items-center justify-between px-5"><button onClick={onBack} aria-label="Go back" className={`grid h-9 w-9 place-items-center rounded-full text-xl ${onBack?"":"invisible"}`}>‹</button><h1 className="text-sm font-extrabold">{title}</h1><div className="grid min-w-9 place-items-center">{right??<span className="text-lg">♧</span>}</div></header>}
-
-function Home({shop,dashboard,newOrders,onToggle,onGo,onOrder}:{shop:Shop;dashboard:Dashboard|null;newOrders:number;onToggle:()=>void;onGo:(page:Page)=>void;onOrder:(id:string)=>void}){
-  const sales=dashboard?.sales.today??{orders:0,revenue:0};
-  const metrics=[["▣",String(newOrders),"New Orders","bg-orange-50 text-[#ff5b12]"],["▤",String(sales.orders),"Items Sold","bg-emerald-50 text-emerald-600"],["▥",money(sales.revenue),"Today’s Sales","bg-blue-50 text-blue-600"],["◈",money(Math.round(sales.revenue*.95)),"Your Earnings","bg-violet-50 text-violet-600"]];
-  return <div><header className="flex items-center gap-3 px-5 pb-3 pt-5"><Avatar shop={shop} size="small"/><div className="min-w-0 flex-1"><div className="flex items-center gap-1"><h1 className="truncate text-sm font-extrabold">{shop.name}</h1><span className="text-xs">⌄</span></div><span className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${shop.is_open?"bg-emerald-100 text-emerald-700":"bg-slate-100 text-slate-600"}`}>{shop.is_open?"Open":"Closed"}</span></div><button aria-label="Notifications" className="relative grid h-10 w-10 place-items-center rounded-xl bg-white text-lg shadow-sm">♧{newOrders>0&&<i className="absolute right-2 top-2 h-2 w-2 rounded-full bg-red-500"/>}</button></header><section className="mx-5 rounded-2xl bg-gradient-to-r from-[#e7ffe9] to-[#f7fff0] p-4"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-200 text-xl">✓</div><div className="flex-1"><h2 className="text-sm font-extrabold">Shop is {shop.is_open?"Open":"Closed"}</h2><p className="mt-0.5 text-[11px] text-slate-500">{shop.is_open?"You will receive new orders":"Customers cannot place orders"}</p></div><button onClick={onToggle} aria-label="Toggle shop availability" className={`relative h-6 w-11 rounded-full transition ${shop.is_open?"bg-emerald-500":"bg-slate-300"}`}><i className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${shop.is_open?"left-6":"left-1"}`}/></button></div></section><div className="flex items-center justify-between px-5 pb-3 pt-5"><p className="text-xs font-bold text-slate-500">Today, {new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</p><button onClick={()=>onGo("analytics")} className="text-xs font-bold text-[#ff5b12]">View Analytics ›</button></div><section className="grid grid-cols-2 gap-3 px-5">{metrics.map(([icon,value,label,color])=><div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100" key={label}><div className={`grid h-8 w-8 place-items-center rounded-xl text-sm ${color}`}>{icon}</div><p className="mt-2 text-xl font-extrabold tracking-tight">{value}</p><p className="text-[10px] font-medium text-slate-500">{label}</p></div>)}</section><section className="mx-5 mt-5 grid grid-cols-4 gap-2">{[["▤","Products","products"],["▣","Orders","orders"],["▥","Earnings","analytics"],["✎","Edit Shop","settings"]].map(([icon,label,target])=><button onClick={()=>onGo(target as Page)} className="grid place-items-center gap-1.5 rounded-2xl bg-white py-3 text-[10px] font-bold text-slate-600 shadow-sm ring-1 ring-slate-100" key={label}><span className="grid h-8 w-8 place-items-center rounded-xl bg-orange-50 text-base text-[#ff5b12]">{icon}</span>{label}</button>)}</section><section className="px-5 pb-5 pt-6"><div className="flex items-center justify-between"><h2 className="text-base font-extrabold">Recent Orders</h2><button onClick={()=>onGo("orders")} className="text-xs font-bold text-[#ff5b12]">View All</button></div><div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-100">{dashboard?.recentOrders?.length?dashboard.recentOrders.slice(0,3).map(order=><button onClick={()=>onOrder(order.id)} className="flex w-full items-center gap-3 py-3 text-left" key={order.id}><div className="grid h-9 w-9 place-items-center rounded-xl bg-orange-50 text-[#ff5b12]">♙</div><div className="min-w-0 flex-1"><p className="text-xs font-extrabold">{order.order_no}</p><p className="mt-0.5 truncate text-[10px] text-slate-500">{order.customer_name||"Customer"} · {relativeTime(order.created_at)}</p></div><div className="text-right"><p className="text-xs font-extrabold">{money(order.total_paise)}</p><StatusPill status={order.status}/></div></button>):<p className="py-6 text-center text-sm text-slate-500">No orders yet. Your incoming orders will appear here.</p>}</div></section>{dashboard?.lowStock?.length?<section className="mx-5 mb-5 rounded-2xl border border-amber-100 bg-amber-50 p-4"><p className="text-xs font-extrabold text-amber-800">⚠ Low-stock reminder</p><p className="mt-1 text-[11px] text-amber-700">{dashboard.lowStock.map(item=>`${item.name} (${item.quantity})`).join(", ")}</p><button onClick={()=>onGo("products")} className="mt-2 text-xs font-extrabold text-[#ff5b12]">Manage inventory ›</button></section>:null}</div>;
-}
-function relativeTime(value:string){const time=new Date(value.endsWith("Z")?value:`${value}Z`).getTime();if(Number.isNaN(time))return "Recently";const minutes=Math.max(1,Math.floor((Date.now()-time)/60000));return minutes<60?`${minutes} mins ago`:minutes<1440?`${Math.floor(minutes/60)} hours ago`:`${Math.floor(minutes/1440)} days ago`;}
-
-function Orders({orders,filter,search,onFilter,onSearch,onOrder}:{orders:MerchantOrder[];filter:string;search:string;onFilter:(value:string)=>void;onSearch:(value:string)=>void;onOrder:(id:string)=>void}){const tabs:[string,string][]=[["placed","New"],["preparing","Preparing"],["ready","Ready"],["completed","Completed"]];return <div><Header title="Orders"/><div className="scrollbar-none flex gap-2 overflow-x-auto px-5 pb-3">{tabs.map(([value,label])=><button onClick={()=>onFilter(value)} key={value} className={`whitespace-nowrap rounded-xl px-3.5 py-2 text-[11px] font-bold ${filter===value?"bg-[#ff5b12] text-white":"bg-slate-100 text-slate-600"}`}>{label}{value==="placed"?` (${orders.length})`:""}</button>)}</div><div className="px-5"><label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 text-slate-400"><span>⌕</span><input value={search} onChange={event=>onSearch(event.target.value)} placeholder="Search by order ID or customer name..." className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"/></label></div><section className="space-y-3 px-5 pb-6 pt-4">{orders.map(order=><button onClick={()=>onOrder(order.id)} key={order.id} className="w-full rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-100"><div className="flex items-start"><div className="flex-1"><p className="text-sm font-extrabold">{order.order_no}</p><p className="mt-1 text-xs font-semibold text-slate-700">♙ {order.customer_name||"Customer"}</p><p className="mt-1 max-w-[250px] truncate text-[10px] text-slate-500">⌖ {order.address_line||"Address not available"}</p></div><StatusPill status={order.status}/></div><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3"><span className="text-[11px] text-slate-500">{relativeTime(order.created_at)}</span><b className="text-sm">{money(order.total_paise)}</b></div></button>)}{!orders.length&&<div className="rounded-2xl bg-white px-5 py-12 text-center shadow-sm"><p className="text-3xl">▣</p><p className="mt-3 text-sm font-bold">No matching orders</p><p className="mt-1 text-xs text-slate-500">Orders from customers will appear here.</p></div>}</section></div>}
-
-function ProductThumb({product}:{product:Product}){return <ProductImage src={product.image_url} name={product.name} className="h-14 w-14 rounded-xl object-cover"/>}
-function Products({products,filter,search,onFilter,onSearch,onAdd,onEdit,onToggle}:{products:Product[];filter:string;search:string;onFilter:(value:string)=>void;onSearch:(value:string)=>void;onAdd:()=>void;onEdit:(product:Product)=>void;onToggle:(product:Product)=>void}){return <div><Header title="Products"/><div className="px-5"><label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5 text-slate-400"><span>⌕</span><input value={search} onChange={event=>onSearch(event.target.value)} placeholder="Search products..." className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"/></label></div><div className="flex gap-2 px-5 py-4">{[["all","All"],["in","In Stock"],["out","Out of Stock"]].map(([value,label])=><button onClick={()=>onFilter(value)} key={value} className={`rounded-xl px-4 py-2 text-[11px] font-bold ${filter===value?"bg-[#ff5b12] text-white":"bg-slate-100 text-slate-600"}`}>{label}</button>)}</div><section className="divide-y divide-slate-100 px-5">{products.map(product=><div className="flex items-center gap-3 py-3" key={product.id}><ProductThumb product={product}/><button onClick={()=>onEdit(product)} className="min-w-0 flex-1 text-left"><p className="truncate text-xs font-extrabold">{product.name}</p><p className="mt-1 text-xs font-bold">{money(product.price_paise)} <span className="font-medium text-slate-400">{product.unit||"each"}</span></p><p className={`mt-1 text-[10px] font-bold ${product.quantity>0&&product.is_active?"text-emerald-600":"text-rose-600"}`}>{product.quantity>0&&product.is_active?`${product.quantity} in stock`:"Out of stock"}</p></button><button onClick={()=>onToggle(product)} aria-label="Toggle product availability" className={`relative h-5 w-9 rounded-full ${product.is_active&&product.quantity>0?"bg-emerald-500":"bg-slate-300"}`}><i className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow ${product.is_active&&product.quantity>0?"left-[18px]":"left-0.5"}`}/></button><button onClick={()=>onEdit(product)} aria-label="Edit product" className="text-xl text-slate-400">⋮</button></div>)}{!products.length&&<div className="py-16 text-center"><p className="text-4xl">🛍️</p><p className="mt-3 text-sm font-bold">No products found</p><button onClick={onAdd} className="mt-3 text-xs font-bold text-[#ff5b12]">Add your first product</button></div>}</section><div className="sticky bottom-16 px-5 py-4"><button onClick={onAdd} className="w-full rounded-xl bg-[#ff5b12] py-3 text-sm font-extrabold text-white shadow-lg shadow-orange-200">＋ Add New Product</button></div></div>}
-
-function Field({label,children,required=false}:{label:string;children:React.ReactNode;required?:boolean}){return <label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-700">{label}{required&&<b className="text-[#ff5b12]"> *</b>}</span>{children}</label>}
-const inputClass="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#ff5b12] focus:ring-2 focus:ring-orange-100";
-function ProductForm({product,categories,busy,onBack,onSave}:{product:Product|null;categories:Category[];busy:boolean;onBack:()=>void;onSave:(event:FormEvent<HTMLFormElement>)=>void}){return <form onSubmit={onSave}><Header title={product?"Edit Product":"Add Product"} onBack={onBack}/><div className="space-y-4 px-5 pb-28"><Field label="Product photo"><ProductImagePicker initialValue={product?.image_url}/></Field><Field label="Product Name" required><input required name="name" defaultValue={product?.name??""} placeholder="e.g., Aashirvaad Atta" className={inputClass}/></Field><Field label="Category"><select name="categoryId" defaultValue={product?.category_id??""} className={inputClass}><option value="">Select Category</option>{categories.map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select></Field><div className="grid grid-cols-2 gap-3"><Field label="Price (₹)" required><input required name="price" type="number" min="1" step="1" defaultValue={product?product.price_paise/100:""} placeholder="245" className={inputClass}/></Field><Field label="Stock Quantity" required><input required name="stock" type="number" min="0" step="1" defaultValue={product?.quantity??""} placeholder="10" className={inputClass}/></Field></div><Field label="Low-stock alert at"><input name="lowStockThreshold" type="number" min="0" step="1" defaultValue={product?.low_stock_threshold??5} className={inputClass}/></Field><Field label="Unit"><input name="unit" defaultValue={product?.unit??""} placeholder="e.g., 5 kg, 1 L, each" className={inputClass}/></Field><Field label="Description"><textarea name="description" defaultValue={product?.description??""} placeholder="Tell customers about this product…" className={`${inputClass} min-h-24 resize-none`}/></Field><label className="flex items-center justify-between rounded-xl bg-slate-50 p-3"><span><b className="block text-sm">Available for customers</b><small className="text-xs text-slate-500">Turn off to hide this product</small></span><input name="active" type="checkbox" defaultChecked={product?Boolean(product.is_active):true} className="h-5 w-5 accent-[#ff5b12]"/></label></div><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4"><button disabled={busy} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white disabled:opacity-60">{busy?"Saving…":product?"Save Changes":"Save Product"}</button></div></form>}
-
-function OrderDetails({detail,onBack,onAccept,onReject,onUpdate}:{detail:OrderDetail;onBack:()=>void;onAccept:()=>void;onReject:()=>void;onUpdate:()=>void}){const order=detail.order;const canDecide=order.status==="placed";return <div><Header title="Order Details" onBack={onBack}/><div className="space-y-4 px-5 pb-32"><section><div className="flex items-start justify-between"><div><h2 className="text-lg font-extrabold">{order.order_no}</h2><p className="mt-1 text-[11px] text-slate-500">{new Date(order.created_at).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"})}</p></div><StatusPill status={order.status}/></div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h3 className="text-xs font-extrabold">Customer Details</h3><div className="mt-3 flex gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-orange-50 text-[#ff5b12]">♙</div><div className="min-w-0 flex-1"><p className="text-sm font-bold">{order.customer_name||"Customer"}</p><p className="mt-1 text-xs text-slate-500">{order.customer_phone||"Phone unavailable"}</p></div>{order.customer_phone&&<a href={`tel:${order.customer_phone}`} className="grid h-10 w-10 place-items-center rounded-xl border border-emerald-200 text-emerald-600">⌕</a>}</div><div className="mt-3 flex gap-3 border-t border-slate-100 pt-3"><span className="text-lg text-slate-400">⌖</span><p className="text-xs leading-5 text-slate-600">{order.address_line}{order.landmark?`, ${order.landmark}`:""}</p></div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h3 className="text-xs font-extrabold">Items ({detail.items.length})</h3><div className="mt-3 space-y-3">{detail.items.map(item=><div className="flex items-center gap-3" key={item.product_name}><div className="grid h-9 w-9 place-items-center rounded-lg bg-orange-50">{productIcon(item.product_name)}</div><div className="flex-1"><p className="text-xs font-bold">{item.product_name}</p><p className="text-[10px] text-slate-500">Qty {item.quantity}</p></div><b className="text-xs">{money(item.total_paise)}</b></div>)}</div><div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-xs"><div className="flex justify-between"><span className="text-slate-500">Payment</span><span className="capitalize">{order.payment_method?.replaceAll("_"," ")}</span></div><div className="flex justify-between font-extrabold"><span>Total</span><span>{money(order.total_paise)}</span></div></div></section>{order.delivery_instructions&&<section className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800"><b>Customer note</b><p className="mt-1">{order.delivery_instructions}</p></section>}</div><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto flex max-w-[480px] gap-3 border-t border-slate-100 bg-white p-4">{canDecide?<><button onClick={onReject} className="flex-1 rounded-xl border border-[#ff5b12] py-3 text-sm font-extrabold text-[#ff5b12]">Reject</button><button onClick={onAccept} className="flex-[1.6] rounded-xl bg-[#ff5b12] py-3 text-sm font-extrabold text-white">Accept Order</button></>:<button onClick={onUpdate} className="w-full rounded-xl bg-[#ff5b12] py-3 text-sm font-extrabold text-white">Update Order Status</button>}</div></div>}
-
-function OrderStatus({detail,busy,onBack,onStatus}:{detail:OrderDetail;busy:boolean;onBack:()=>void;onStatus:(status:"preparing"|"ready")=>void}){const current=detail.order.status;const steps=["accepted","preparing","ready","assigned","delivered"];const currentIndex=steps.indexOf(current);const next=current==="accepted"?"preparing":current==="preparing"?"ready":null;return <div><Header title="Update Order Status" onBack={onBack}/><div className="px-5 pb-28"><div className="mt-5 flex items-start justify-between">{steps.map((step,index)=><div className="relative flex flex-1 flex-col items-center text-center" key={step}>{index<steps.length-1&&<i className={`absolute left-1/2 top-3 h-0.5 w-full ${index<currentIndex?"bg-emerald-500":"bg-slate-200"}`}/>}<span className={`z-10 grid h-6 w-6 place-items-center rounded-full text-[10px] ${index<=currentIndex?"bg-emerald-500 text-white":"bg-slate-200 text-slate-400"}`}>{index<=currentIndex?"✓":index+1}</span><small className={`mt-2 text-[9px] font-bold ${index===currentIndex?"text-[#ff5b12]":"text-slate-400"}`}>{orderLabel(step)}</small></div>)}</div><section className="mt-10 rounded-3xl bg-gradient-to-br from-orange-50 to-amber-50 p-6 text-center"><div className="text-7xl">🛍️</div><h2 className="mt-4 text-lg font-extrabold">{current==="accepted"?"Prepare the Order":current==="preparing"?"Order is being prepared":"Order is ready"}</h2><p className="mx-auto mt-2 max-w-[260px] text-xs leading-5 text-slate-600">{next==="preparing"?"Start preparing the items for this customer.":next==="ready"?"Pack all items and mark ready for pickup.":"This order is ready for the delivery partner."}</p></section><div className="mt-5 rounded-xl bg-orange-50 p-3 text-[11px] text-slate-600">ⓘ The customer will be notified when the order status changes.</div></div><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4">{next?<button disabled={busy} onClick={()=>onStatus(next)} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white disabled:opacity-60">{busy?"Updating…":next==="preparing"?"Start Preparing":"Mark as Ready"}</button>:<button onClick={onBack} className="w-full rounded-xl border border-[#ff5b12] py-3.5 text-sm font-extrabold text-[#ff5b12]">View Order Details</button>}</div></div>}
-
-function Analytics({dashboard,range,onRange}:{dashboard:Dashboard|null;range:"today"|"week"|"month";onRange:(value:"today"|"week"|"month")=>void}){const sale=dashboard?.sales[range]??{orders:0,revenue:0};const bars=range==="today"?[18,29,46,17,62,20,39,50,77,55]:range==="week"?[35,59,48,74,62,89,71]:[42,63,72,50,85,64,92];return <div><Header title="Earnings"/><div className="mx-5 flex rounded-xl bg-slate-100 p-1">{(["today","week","month"] as const).map(value=><button onClick={()=>onRange(value)} className={`flex-1 rounded-lg py-2 text-[11px] font-bold ${range===value?"bg-[#ff5b12] text-white shadow":"text-slate-500"}`} key={value}>{value==="today"?"Daily":value[0].toUpperCase()+value.slice(1)}</button>)}</div><div className="space-y-4 px-5 pb-6 pt-5"><section className="rounded-2xl bg-gradient-to-r from-[#ddffe2] to-[#f2fff0] p-5"><p className="text-2xl font-extrabold text-emerald-700">{money(Math.round(Number(sale.revenue)*.95))}</p><p className="mt-1 text-xs text-emerald-700">Your earnings {range}</p><span className="float-right -mt-10 grid h-11 w-11 place-items-center rounded-full bg-white text-xl">▥</span></section><section className="grid grid-cols-2 gap-3">{[[money(sale.revenue),"Total Sales"],[String(sale.orders),"Total Orders"],[money(sale.orders?Math.round(Number(sale.revenue)/Number(sale.orders)):0),"Avg Order Value"],[money(Math.round(Number(sale.revenue)*.05)),"Platform Fees"]].map(([value,label])=><div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100" key={label}><p className="text-base font-extrabold">{value}</p><p className="mt-1 text-[10px] text-slate-500">{label}</p></div>)}</section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Sales Overview</h2><div className="mt-6 flex h-32 items-end gap-2">{bars.map((height,index)=><div className="flex flex-1 flex-col items-center gap-2" key={index}><i className="w-full rounded-t bg-gradient-to-t from-[#ff5b12] to-orange-300" style={{height:`${height}%`}}/><small className="text-[8px] text-slate-400">{index%2===0?`${6+index*2}AM`:""}</small></div>)}</div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Top Products</h2>{dashboard?.topProducts?.length?dashboard.topProducts.map((product,index)=><div className="mt-3 flex items-center gap-3 text-xs" key={product.product_name}><b className="grid h-6 w-6 place-items-center rounded-full bg-orange-50 text-[#ff5b12]">{index+1}</b><span className="flex-1 font-bold">{product.product_name}</span><span className="text-slate-500">{product.units} sold</span></div>):<p className="mt-3 text-xs text-slate-500">Your best-selling products will show here after orders arrive.</p>}</section></div></div>}
-
-function ShopProfile({shop,onBack,onEdit}:{shop:Shop;onBack:()=>void;onEdit:()=>void}){const rows=[["Owner","Shop partner"],["Phone Number",shop.phone],["Shop Address",shop.address],["Shop Timings",shop.opening_hours||"Set your business hours"],["Delivery",shop.delivery_available?"Available":"Not available"]];return <div><Header title="Shop Profile" onBack={onBack}/><section className="mx-5 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100"><div className="h-24 bg-gradient-to-br from-orange-200 via-amber-100 to-emerald-100"/><div className="-mt-9 flex items-end gap-3 px-4"><Avatar shop={shop}/><div className="pb-1"><h2 className="text-base font-extrabold">{shop.name}</h2><span className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${shop.is_open?"bg-emerald-100 text-emerald-700":"bg-slate-100 text-slate-600"}`}>{shop.is_open?"Open":"Closed"}</span></div></div><dl className="mt-5 divide-y divide-slate-100 px-4">{rows.map(([label,value])=><div className="grid grid-cols-[110px_1fr] gap-2 py-3 text-xs" key={label}><dt className="font-bold text-slate-500">{label}</dt><dd className="text-slate-700">{value}</dd></div>)}</dl><button onClick={onEdit} className="m-4 w-[calc(100%-2rem)] rounded-xl border border-[#ff5b12] py-3 text-sm font-extrabold text-[#ff5b12]">Edit Profile</button></section></div>}
-
-function ShopSettings({shop,busy,onBack,onSave}:{shop:Shop;busy:boolean;onBack:()=>void;onSave:(event:FormEvent<HTMLFormElement>)=>void}){return <form onSubmit={onSave}><Header title="Shop Settings" onBack={onBack}/><div className="space-y-4 px-5 pb-28"><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Shop Information</h2><div className="mt-4 space-y-4"><Field label="Shop name" required><input name="name" required defaultValue={shop.name} className={inputClass}/></Field><Field label="Phone number" required><input name="phone" required defaultValue={shop.phone} className={inputClass}/></Field><Field label="Shop address" required><textarea name="address" required defaultValue={shop.address} className={`${inputClass} min-h-20 resize-none`}/></Field><Field label="Banner / image URL"><input name="imageUrl" type="url" defaultValue={shop.image_url??""} placeholder="https://…" className={inputClass}/></Field></div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Business & delivery</h2><div className="mt-4 space-y-4"><Field label="Business hours"><input name="hours" defaultValue={shop.opening_hours??""} placeholder="e.g., 7:00 AM – 10:00 PM" className={inputClass}/></Field><label className="flex items-center justify-between"><span><b className="block text-sm">Shop open</b><small className="text-xs text-slate-500">Receive new orders now</small></span><input name="isOpen" type="checkbox" defaultChecked={Boolean(shop.is_open)} className="h-5 w-5 accent-[#ff5b12]"/></label><label className="flex items-center justify-between"><span><b className="block text-sm">Delivery available</b><small className="text-xs text-slate-500">Allow delivery orders</small></span><input name="delivery" type="checkbox" defaultChecked={Boolean(shop.delivery_available)} className="h-5 w-5 accent-[#ff5b12]"/></label></div></section></div><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4"><button disabled={busy} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white disabled:opacity-60">{busy?"Saving…":"Save Changes"}</button></div></form>}
-
-function More({shop,onGo,onLogout}:{shop:Shop;onGo:(page:Page)=>void;onLogout:()=>void}){const options:[string,string,Page][]=[["▤","My Products","products"],["▣","My Orders","orders"],["▥","Earnings & Reports","analytics"],["♙","Shop Profile","profile"],["⚙","Settings","settings"]];return <div><Header title="More"/><section className="mx-5 flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><Avatar shop={shop}/><div className="min-w-0 flex-1"><p className="truncate text-sm font-extrabold">{shop.name}</p><p className="mt-1 text-xs text-slate-500">Shop Partner</p><span className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${shop.is_open?"bg-emerald-100 text-emerald-700":"bg-slate-100 text-slate-600"}`}>{shop.is_open?"Open":"Closed"}</span></div></section><section className="mx-5 mt-4 divide-y divide-slate-100 rounded-2xl bg-white px-4 shadow-sm ring-1 ring-slate-100">{options.map(([icon,label,target])=><button onClick={()=>onGo(target)} className="flex w-full items-center gap-3 py-4 text-left" key={label}><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50 text-[#ff5b12]">{icon}</span><b className="flex-1 text-sm">{label}</b><span className="text-slate-400">›</span></button>)}<div className="flex items-center gap-3 py-4 text-sm text-slate-500"><span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100">?</span><span className="flex-1 font-semibold">Help & Support</span><span>›</span></div></section><button onClick={onLogout} className="mx-5 mt-6 w-[calc(100%-2.5rem)] rounded-xl border border-rose-300 py-3 text-sm font-extrabold text-rose-600">⌫ Logout</button></div>}

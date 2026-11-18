@@ -1,44 +1,842 @@
 "use client";
 
-import {useEffect,useMemo,useState} from "react";
-import Link from "next/link";
-import {useRouter} from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Award,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  Package,
+  Star,
+  Truck,
+  Wallet,
+  X,
+} from "lucide-react";
+import { ProductImage } from "@/components/product-image";
+import {
+  RiderMoreView,
+  RiderNotificationsView,
+  RiderProfileView,
+  RiderSupportView,
+} from "@/components/rider/rider-account";
+import {
+  RiderEarningsView,
+  RiderOrderHistoryView,
+} from "@/components/rider/rider-earnings";
+import { RiderLogin } from "@/components/rider/rider-login";
+import {
+  RiderBottomNav,
+  RiderHeader,
+} from "@/components/rider/rider-nav";
+import {
+  RiderDeliverHandoverView,
+  RiderDeliverMapView,
+  RiderOrderDetailsView,
+  RiderOrdersQueue,
+  RiderPickupView,
+} from "@/components/rider/rider-orders";
+import type {
+  RiderDashboardData,
+  RiderDelivery,
+  RiderNotification,
+  RiderOrderItem,
+  RiderPage,
+} from "@/components/rider/types";
+import { apiFetch } from "@/lib/client-session";
+import {
+  calculateCompletionRate,
+  calculateRiderIncentive,
+  estimateRouteEta,
+  formatRupees,
+} from "@/lib/rider-ui";
 
-type Rider={id:string;full_name:string;phone?:string|null;rider_available:number};
-type Delivery={id:string;assignment_id?:string;assignment_status?:string;order_no:string;status:string;total_paise:number;delivery_fee_paise:number;created_at:string;shop_name:string;shop_address:string;shop_phone?:string|null;customer_name:string;customer_phone?:string|null;address_line:string;landmark?:string|null;item_count:number};
-type History={id:string;order_no:string;total_paise:number;delivery_fee_paise:number;shop_name:string;customer_name:string;delivered_at:string};
-type Dashboard={profile:Rider;active:Delivery[];available:Delivery[];history:History[];earnings:{today:{deliveries:number;earnings:number};week:{deliveries:number;earnings:number}}};
-type View="home"|"orders"|"earnings"|"profile"|"more"|"detail"|"pickup"|"deliver";
+export default function RiderApp() {
+  const [dashboard, setDashboard] = useState<RiderDashboardData | null>(null);
+  const [notifications, setNotifications] = useState<RiderNotification[]>([]);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-const money=(value:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format((Number(value)||0)/100);
-const timeAgo=(value:string)=>{const difference=Date.now()-new Date(value.endsWith("Z")?value:`${value}Z`).getTime();const minutes=Math.max(1,Math.round(difference/60000));return minutes<60?`${minutes} mins ago`:minutes<1440?`${Math.round(minutes/60)} hrs ago`:`${Math.round(minutes/1440)} days ago`;};
-async function api<T>(url:string,init?:RequestInit):Promise<T>{const response=await fetch(url,init);const body=await response.json().catch(()=>({error:"Unable to read the server response."}));if(!response.ok)throw new Error(body.error||"Something went wrong.");return body as T;}
+  const [page, setPage] = useState<RiderPage>("home");
+  const [selected, setSelected] = useState<RiderDelivery | null>(null);
+  const [orderItems, setOrderItems] = useState<RiderOrderItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [pickedChecked, setPickedChecked] = useState(false);
 
-export default function RiderApp(){
-  const router=useRouter();const [dashboard,setDashboard]=useState<Dashboard|null>(null);const [view,setView]=useState<View>("home");const [selected,setSelected]=useState<Delivery|null>(null);const [orderTab,setOrderTab]=useState<"available"|"progress">("available");const [range,setRange]=useState<"today"|"week">("today");const [notice,setNotice]=useState("");const [error,setError]=useState("");const [busy,setBusy]=useState(false);
-  async function load(){setError("");try{setDashboard(await api<Dashboard>("/api/rider/dashboard"));}catch(reason){setError(reason instanceof Error?reason.message:"Unable to load delivery partner app.");}}
-  useEffect(()=>{void load();},[]);
-  async function run(work:()=>Promise<void>){setBusy(true);setError("");try{await work();}catch(reason){setError(reason instanceof Error?reason.message:"Something went wrong.");}finally{setBusy(false);}}
-  async function availability(){if(!dashboard)return;await run(async()=>{const online=!Boolean(dashboard.profile.rider_available);await api("/api/rider/availability",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({available:online})});setNotice(online?"You are online and can receive deliveries.":"You are offline. New delivery requests are paused.");await load();});}
-  async function accept(order:Delivery){await run(async()=>{await api(`/api/rider/orders/${order.id}/accept`,{method:"POST"});setNotice("Order accepted. Head to the shop for pickup.");await load();const refreshed=dashboard?.active.find(item=>item.id===order.id);setSelected(refreshed??{...order,assignment_status:"assigned",status:"assigned"});setView("pickup");});}
-  async function pickup(){if(!selected)return;await run(async()=>{await api(`/api/rider/orders/${selected.id}/status`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status:"picked_up"})});setNotice("Pickup confirmed. Start delivery to the customer.");await load();setSelected({...selected,assignment_status:"picked_up",status:"out_for_delivery"});setView("deliver");});}
-  async function delivered(){if(!selected)return;await run(async()=>{await api(`/api/rider/orders/${selected.id}/status`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({status:"delivered"})});setNotice("Delivery completed. Great work!");await load();setSelected(null);setView("home");});}
-  async function logout(){await api("/api/auth/logout",{method:"POST"});router.replace("/sign-in");}
-  if(!dashboard)return <main className="grid min-h-screen place-items-center bg-[#fff3e5] p-5 text-center"><div className="max-w-sm rounded-[2rem] bg-white p-8 shadow-xl shadow-orange-950/10"><div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-orange-100 text-3xl">🛵</div><h1 className="mt-5 text-xl font-extrabold">Delivery Partner</h1><p className="mt-2 text-sm text-slate-600">{error||"Loading your rider app…"}</p><button onClick={()=>void load()} className="mt-5 rounded-xl bg-[#ff5b12] px-5 py-3 text-sm font-bold text-white">Try again</button>{error.toLowerCase().includes("access")&&<button onClick={()=>void logout()} className="mt-3 block w-full text-sm font-bold text-[#ff5b12] underline underline-offset-4">Sign out and switch account</button>}</div></main>;
-  const content=()=>{if(view==="home")return <Home dashboard={dashboard} onAvailability={()=>void availability()} onGo={setView}/>;if(view==="orders")return <Orders available={dashboard.available} active={dashboard.active} tab={orderTab} onTab={setOrderTab} onOpen={order=>{setSelected(order);setView("detail");}}/>;if(view==="earnings")return <Earnings dashboard={dashboard} range={range} onRange={setRange}/>;if(view==="profile")return <Profile rider={dashboard.profile} onGo={setView}/>;if(view==="more")return <More rider={dashboard.profile} onGo={setView} onLogout={()=>void logout()}/>;if(view==="detail"&&selected)return <OrderDetail order={selected} busy={busy} onBack={()=>setView("orders")} onAccept={()=>void accept(selected)} onPickup={()=>setView("pickup")}/>;if(view==="pickup"&&selected)return <Pickup order={selected} busy={busy} onBack={()=>setView("detail")} onPickup={()=>void pickup()}/>;if(view==="deliver"&&selected)return <Deliver order={selected} busy={busy} onBack={()=>setView("pickup")} onDelivered={()=>void delivered()}/>;return <Home dashboard={dashboard} onAvailability={()=>void availability()} onGo={setView}/>;};
-  const activeMain=view==="home"?"home":view==="orders"||view==="detail"||view==="pickup"||view==="deliver"?"orders":view==="earnings"?"earnings":"profile";
-  return <main className="min-h-screen bg-[#fff3e5] text-slate-900 md:p-6"><div className="mx-auto min-h-screen max-w-[480px] overflow-hidden bg-[#fffdfa] shadow-2xl shadow-orange-950/10 md:min-h-[820px] md:rounded-[2rem]">{notice&&<button onClick={()=>setNotice("")} className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 rounded-2xl bg-emerald-700 px-4 py-3 text-left text-sm font-semibold text-white shadow-lg">✓ {notice}</button>}{error&&<button onClick={()=>setError("")} className="fixed left-1/2 top-4 z-50 w-[calc(100%-2rem)] max-w-[440px] -translate-x-1/2 rounded-2xl bg-rose-600 px-4 py-3 text-left text-sm font-semibold text-white shadow-lg">{error}</button>}<div className="min-h-[calc(100vh-68px)] pb-20 md:min-h-[752px]">{content()}</div>{["home","orders","earnings","profile","more"].includes(view)&&<nav className="sticky bottom-0 z-30 flex border-t border-slate-100 bg-white/95 px-2 backdrop-blur"><Nav active={activeMain==="home"} icon="⌂" label="Home" onClick={()=>setView("home")}/><Nav active={activeMain==="orders"} icon="▣" label="Orders" onClick={()=>setView("orders")}/><Nav active={activeMain==="earnings"} icon="▥" label="Earnings" onClick={()=>setView("earnings")}/><Nav active={activeMain==="profile"} icon="♙" label="Profile" onClick={()=>setView("profile")}/></nav>}</div></main>;
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  const load = useCallback(async (): Promise<RiderDashboardData | null> => {
+    setError("");
+    try {
+      const sessionRes = await apiFetch("/api/auth/session", {
+        cache: "no-store",
+      });
+      const sessionBody = await sessionRes.json().catch(() => ({}));
+      const sessionUser = sessionBody.user as
+        | { id: string; role: string; fullName: string }
+        | null
+        | undefined;
+
+      if (!sessionUser) {
+        setAuthRequired(true);
+        return null;
+      }
+
+      if (sessionUser.role !== "rider") {
+        setError(
+          `Delivery Partner access is required. Currently signed in as ${sessionUser.role}.`
+        );
+        setAuthRequired(true);
+        return null;
+      }
+
+      const [dashRes, notifRes] = await Promise.all([
+        apiFetch("/api/rider/dashboard", { cache: "no-store" }),
+        apiFetch("/api/notifications", { cache: "no-store" }),
+      ]);
+
+      if (dashRes.status === 401 || dashRes.status === 403) {
+        setAuthRequired(true);
+        return null;
+      }
+
+      const dashBody = await dashRes.json().catch(() => ({}));
+      if (!dashRes.ok) {
+        throw new Error(dashBody.error || "Unable to load rider dashboard.");
+      }
+
+      const notifBody = await notifRes.json().catch(() => ({}));
+      setDashboard(dashBody as RiderDashboardData);
+      setNotifications(notifBody.notifications ?? []);
+      setAuthRequired(false);
+      return dashBody as RiderDashboardData;
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to load delivery partner app."
+      );
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const fetchOrderItems = useCallback(async (orderId: string) => {
+    setLoadingItems(true);
+    try {
+      const res = await apiFetch(`/api/rider/orders/${orderId}`);
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(body.items)) {
+        setOrderItems(body.items as RiderOrderItem[]);
+        if (body.order) {
+          setSelected(body.order as RiderDelivery);
+        }
+      }
+    } catch {
+      // Keep fallback count on failure
+    } finally {
+      setLoadingItems(false);
+    }
+  }, []);
+
+  function openOrderDetails(order: RiderDelivery) {
+    setSelected(order);
+    setOrderItems([]);
+    setPage("order-detail");
+    void fetchOrderItems(order.id);
+  }
+
+  function openContinueFlow(order: RiderDelivery) {
+    setSelected(order);
+    setOrderItems([]);
+    setPickedChecked(false);
+    void fetchOrderItems(order.id);
+    setPage(order.assignment_status === "picked_up" ? "map" : "pickup");
+  }
+
+  async function run(work: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await work();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Something went wrong."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleAvailability() {
+    if (!dashboard) return;
+    await run(async () => {
+      const online = !Boolean(dashboard.profile.rider_available);
+      const res = await apiFetch("/api/rider/availability", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ available: online }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to update status.");
+      await load();
+      setNotice(
+        online
+          ? "You are now Online and ready for deliveries."
+          : "You are Offline. New order alerts are paused."
+      );
+    });
+  }
+
+  async function acceptOrder(order: RiderDelivery) {
+    await run(async () => {
+      const res = await apiFetch(`/api/rider/orders/${order.id}/accept`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Unable to accept this delivery.");
+      }
+      const fresh = await load();
+      const refreshed = fresh?.active.find((item) => item.id === order.id);
+      setSelected(
+        refreshed ?? {
+          ...order,
+          assignment_status: "assigned",
+          status: "assigned",
+        }
+      );
+      setPickedChecked(false);
+      setNotice("Order accepted. Head to the shop for pickup.");
+      setPage("pickup");
+      await fetchOrderItems(order.id);
+    });
+  }
+
+  async function confirmPickup() {
+    if (!selected) return;
+    await run(async () => {
+      const res = await apiFetch(`/api/rider/orders/${selected.id}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "picked_up" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Unable to confirm pickup.");
+      }
+      await load();
+      setSelected({
+        ...selected,
+        assignment_status: "picked_up",
+        status: "out_for_delivery",
+      });
+      setNotice("Pickup confirmed. Follow the route to deliver to customer.");
+      setPage("map");
+    });
+  }
+
+  async function markDelivered() {
+    if (!selected) return;
+    await run(async () => {
+      const orderNo = selected.order_no;
+      const res = await apiFetch(`/api/rider/orders/${selected.id}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "delivered" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Unable to complete delivery.");
+      }
+      await load();
+      setSelected(null);
+      setNotice(`Order #${orderNo} delivered! Earnings updated.`);
+      setPage("home");
+    });
+  }
+
+  async function saveProfile(fullName: string, phone: string) {
+    await run(async () => {
+      const res = await apiFetch("/api/profile", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fullName, phone: phone || null }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to update profile.");
+      await load();
+      setNotice("Partner profile saved.");
+    });
+  }
+
+  async function markAllNotificationsRead() {
+    await apiFetch("/api/notifications", { method: "PATCH" });
+    await load();
+  }
+
+  async function submitSupportTicket(subject: string, detail: string) {
+    await run(async () => {
+      const res = await apiFetch("/api/support", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "support", subject, detail }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Unable to submit request.");
+      setNotice("Support request sent to Pavagada One operations.");
+    });
+  }
+
+  async function logout() {
+    await apiFetch("/api/auth/logout", { method: "POST" });
+    setDashboard(null);
+    setAuthRequired(true);
+    setPage("home");
+  }
+
+  function handleBack() {
+    if (page === "deliver") setPage("map");
+    else if (page === "map") setPage("order-detail");
+    else if (page === "pickup") setPage("order-detail");
+    else if (page === "order-detail") setPage("orders");
+    else if (page === "support") setPage("profile");
+    else if (page === "history") setPage("orders");
+    else if (page === "notifications" || page === "more") setPage("home");
+    else setPage("home");
+  }
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read_at).length,
+    [notifications]
+  );
+
+  if (loading) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#FAFAFA] p-6 text-center">
+        <div className="space-y-3">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#FFF3EE] text-[#FF5A1F]">
+            <Truck className="h-7 w-7" />
+          </div>
+          <p className="text-sm font-semibold text-stone-600">
+            Loading Delivery Partner workspace…
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  if (authRequired || !dashboard) {
+    return (
+      <RiderLogin
+        errorMessage={error}
+        onSignedIn={() => {
+          setLoading(true);
+          void load();
+        }}
+        onSwitchAccount={() => void logout()}
+      />
+    );
+  }
+
+  const online = Boolean(dashboard.profile.rider_available);
+  const deliveriesToday = Number(dashboard.earnings.today?.deliveries ?? 0);
+  const earningsToday = Number(dashboard.earnings.today?.earnings ?? 0);
+  const incentive = calculateRiderIncentive(deliveriesToday);
+  const completionRate = calculateCompletionRate(
+    dashboard.earnings.allTime?.deliveries ?? dashboard.history.length,
+    dashboard.stats?.cancelled ?? 0
+  );
+  const queueCount = dashboard.available.length + dashboard.active.length;
+
+  const activeMain: "home" | "orders" | "earnings" | "profile" =
+    page === "home"
+      ? "home"
+      : page === "orders" ||
+          page === "order-detail" ||
+          page === "pickup" ||
+          page === "map" ||
+          page === "deliver" ||
+          page === "history"
+        ? "orders"
+        : page === "earnings"
+          ? "earnings"
+          : "profile";
+
+  const riderInitial =
+    dashboard.profile.full_name.trim().charAt(0).toUpperCase() || "R";
+
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] text-stone-900 pb-24 md:pb-12">
+      <RiderHeader
+        page={page}
+        activeMain={activeMain}
+        online={online}
+        busy={busy}
+        queueCount={queueCount}
+        unreadCount={unreadCount}
+        onNavigate={(next) => setPage(next)}
+        onBack={handleBack}
+        onToggleAvailability={() => void toggleAvailability()}
+      />
+
+      <main className="mx-auto max-w-6xl px-4 pt-4 md:px-8 md:pt-7">
+        {notice && (
+          <div
+            role="status"
+            className="mb-4 flex w-full items-center justify-between gap-2 rounded-2xl border border-emerald-200 bg-[#EAF7EE] px-4 py-3 text-left text-xs font-semibold text-[#15803D]"
+          >
+            <span>{notice}</span>
+            <button
+              type="button"
+              aria-label="Dismiss notice"
+              onClick={() => setNotice("")}
+              className="grid h-6 w-6 place-items-center rounded-lg hover:bg-emerald-100 shrink-0"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div
+            role="alert"
+            className="mb-4 flex w-full items-center justify-between gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-left text-xs font-semibold text-rose-800"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+              className="grid h-6 w-6 place-items-center rounded-lg hover:bg-rose-100 shrink-0"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* SCREEN 3: HOME DASHBOARD */}
+        {page === "home" && (
+          <div className="grid gap-6 lg:grid-cols-12">
+            {/* Left / Primary Column */}
+            <div className="space-y-4 lg:col-span-7">
+              {/* Rider Identity + Online Switch */}
+              <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="grid h-12 w-12 place-items-center rounded-full bg-[#FFF3EE] text-base font-extrabold text-[#FF5A1F] shrink-0">
+                      {riderInitial}
+                    </span>
+                    <div className="min-w-0">
+                      <h1 className="truncate text-base font-extrabold text-stone-900">
+                        {dashboard.profile.full_name}
+                      </h1>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-stone-500">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                        <span>
+                          Verified Partner ·{" "}
+                          {dashboard.earnings.allTime?.deliveries ??
+                            dashboard.history.length}{" "}
+                          {(dashboard.earnings.allTime?.deliveries ??
+                            dashboard.history.length) === 1
+                            ? "trip"
+                            : "trips"}{" "}
+                          completed
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPage("profile")}
+                    className="text-xs font-bold text-[#FF5A1F] hover:underline shrink-0"
+                  >
+                    Profile
+                  </button>
+                </div>
+
+                {/* Online Status Toggle Bar (Screen 3) */}
+                <div
+                  className={`flex items-center justify-between rounded-xl border px-4 py-2.5 ${
+                    online
+                      ? "border-emerald-200 bg-[#EAF7EE]"
+                      : "border-stone-200 bg-[#FAFAFA]"
+                  }`}
+                >
+                  <span
+                    className={`text-sm font-bold ${
+                      online ? "text-[#15803D]" : "text-stone-600"
+                    }`}
+                  >
+                    {online ? "Online · Accepting Orders" : "Offline · Paused"}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={online}
+                    aria-label="Toggle delivery availability"
+                    disabled={busy}
+                    onClick={() => void toggleAvailability()}
+                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${
+                      online ? "bg-[#15803D]" : "bg-stone-300"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-xs transition-transform ${
+                        online ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </section>
+
+              {/* 2x2 Color-Tinted KPI Grid (Screen 3) */}
+              <section className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-[#EFF6FF] p-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-[#2563EB] shadow-xs shrink-0">
+                      <Package className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                        {deliveriesToday}
+                      </p>
+                      <p className="text-[11px] font-medium text-stone-600">
+                        Deliveries Today
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-[#EAF7EE] p-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-[#15803D] shadow-xs shrink-0">
+                      <Wallet className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                        {formatRupees(earningsToday)}
+                      </p>
+                      <p className="text-[11px] font-medium text-stone-600">
+                        Today&apos;s Earnings
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-[#FFF3EE] p-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-[#FF5A1F] shadow-xs shrink-0">
+                      <Clock className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                        {dashboard.available.length}
+                      </p>
+                      <p className="text-[11px] font-medium text-stone-600">
+                        Ready Pickups
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-[#FEF9EC] p-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-[#D97706] shadow-xs shrink-0">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="tabular-nums text-xl font-extrabold text-stone-900">
+                        {completionRate}%
+                      </p>
+                      <p className="text-[11px] font-medium text-stone-600">
+                        Completion Rate
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Primary Availability CTA (Screen 3) */}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void toggleAvailability()}
+                className={`min-h-[48px] w-full rounded-xl py-3 text-sm font-bold text-white shadow-sm transition disabled:opacity-60 ${
+                  online
+                    ? "bg-[#FF5A1F] shadow-[#FF5A1F]/25 hover:bg-[#E54910]"
+                    : "bg-[#15803D] shadow-[#15803D]/20 hover:bg-[#166534]"
+                }`}
+              >
+                {online ? "Go Offline" : "Go Online Now"}
+              </button>
+
+              {/* Today's Incentives Card (Screen 3) */}
+              <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-stone-900">
+                    Today&apos;s Incentives
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setPage("earnings")}
+                    className="text-xs font-bold text-[#FF5A1F] hover:underline"
+                  >
+                    View Earnings
+                  </button>
+                </div>
+
+                <div className="mt-3 flex items-center gap-3.5 rounded-xl bg-[#FAFAFA] p-3">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#EAF7EE] text-[#15803D] shrink-0">
+                    <Award className="h-6 w-6" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-stone-900 tabular-nums">
+                        {incentive.completed}/{incentive.target} deliveries
+                      </span>
+                      <span className="text-[#15803D] tabular-nums">
+                        {formatRupees(incentive.bonusPaise)} Bonus
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-stone-200">
+                      <div
+                        className="h-full rounded-full bg-[#15803D] transition-all"
+                        style={{ width: `${incentive.progressPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {/* Right Column: Active Delivery + Ready Pickups */}
+            <div className="space-y-4 lg:col-span-5">
+              {dashboard.active.length > 0 && (
+                <section className="rounded-2xl border border-[#15803D]/35 bg-[#EAF7EE] p-4 shadow-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-extrabold text-[#15803D]">
+                      Active Delivery in Progress
+                    </p>
+                    <span className="text-xs font-bold text-[#15803D] tabular-nums">
+                      {formatRupees(dashboard.active[0].delivery_fee_paise)}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-sm font-extrabold text-stone-900">
+                    #{dashboard.active[0].order_no} ·{" "}
+                    {dashboard.active[0].shop_name}
+                  </p>
+                  <p className="mt-0.5 text-xs text-stone-600">
+                    Deliver to {dashboard.active[0].customer_name} ·{" "}
+                    {dashboard.active[0].address_line}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openContinueFlow(dashboard.active[0])}
+                    className="mt-3 min-h-[44px] w-full rounded-xl bg-[#15803D] py-2.5 text-xs font-bold text-white hover:bg-[#166534]"
+                  >
+                    {dashboard.active[0].assignment_status === "picked_up"
+                      ? "Continue to Delivery Map"
+                      : "Continue Pickup"}
+                  </button>
+                </section>
+              )}
+
+              <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-stone-900">
+                    Ready for Pickup ({dashboard.available.length})
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setPage("orders")}
+                    className="inline-flex items-center gap-0.5 text-xs font-bold text-[#FF5A1F] hover:underline"
+                  >
+                    <span>All Orders</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="mt-3 divide-y divide-stone-100">
+                  {dashboard.available.slice(0, 4).map((order) => {
+                    const route = estimateRouteEta(
+                      order.shop_address,
+                      order.address_line
+                    );
+                    return (
+                      <button
+                        key={order.id}
+                        type="button"
+                        onClick={() => openOrderDetails(order)}
+                        className="flex w-full items-center gap-3 py-3 text-left hover:bg-[#FAFAFA] rounded-xl px-1 transition"
+                      >
+                        <ProductImage
+                          src={order.shop_image || "/images/hero-market.jpg"}
+                          name={order.shop_name}
+                          className="h-11 w-11 rounded-xl object-cover shrink-0 bg-[#FFF3EE]"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-xs font-extrabold text-stone-900 tabular-nums">
+                              #{order.order_no} · {order.shop_name}
+                            </p>
+                            <span className="tabular-nums text-xs font-extrabold text-[#15803D] shrink-0">
+                              {formatRupees(order.delivery_fee_paise)}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 truncate text-[11px] text-stone-500">
+                            {order.address_line} · {order.item_count} item
+                            {order.item_count === 1 ? "" : "s"} ·{" "}
+                            {route.distanceLabel}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {!dashboard.available.length && (
+                    <div className="py-8 text-center">
+                      <p className="text-xs font-semibold text-stone-500">
+                        No ready orders awaiting pickup right now.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setPage("history")}
+                        className="mt-2 text-xs font-bold text-[#FF5A1F] hover:underline"
+                      >
+                        View completed trip history
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {/* SCREEN 4: NEW ORDERS QUEUE */}
+        {page === "orders" && (
+          <RiderOrdersQueue
+            available={dashboard.available}
+            active={dashboard.active}
+            online={online}
+            busy={busy}
+            onSelectOrder={openOrderDetails}
+            onAcceptOrder={(order) => void acceptOrder(order)}
+            onContinueOrder={openContinueFlow}
+            onGoOnline={() => void toggleAvailability()}
+          />
+        )}
+
+        {/* SCREEN 5: ORDER DETAILS */}
+        {page === "order-detail" && selected && (
+          <RiderOrderDetailsView
+            order={selected}
+            items={orderItems}
+            loadingItems={loadingItems}
+            online={online}
+            busy={busy}
+            onAcceptOrder={() => void acceptOrder(selected)}
+            onStartPickup={() => {
+              setPickedChecked(false);
+              setPage("pickup");
+            }}
+            onOpenMap={() => setPage("map")}
+          />
+        )}
+
+        {/* SCREEN 6: PICKUP ORDER */}
+        {page === "pickup" && selected && (
+          <RiderPickupView
+            order={selected}
+            items={orderItems}
+            pickedChecked={pickedChecked}
+            busy={busy}
+            onToggleChecked={setPickedChecked}
+            onConfirmPickup={() => void confirmPickup()}
+          />
+        )}
+
+        {/* SCREEN 7: DELIVER TO CUSTOMER (MAP) */}
+        {page === "map" && selected && (
+          <RiderDeliverMapView
+            order={selected}
+            onProceedHandover={() => setPage("deliver")}
+          />
+        )}
+
+        {/* SCREEN 8: DELIVER ORDER (HANDOVER) */}
+        {page === "deliver" && selected && (
+          <RiderDeliverHandoverView
+            order={selected}
+            busy={busy}
+            onMarkDelivered={() => void markDelivered()}
+            onBackToMap={() => setPage("map")}
+          />
+        )}
+
+        {/* SCREEN 9: EARNINGS */}
+        {page === "earnings" && <RiderEarningsView dashboard={dashboard} />}
+
+        {/* SCREEN 10: MY ORDERS HISTORY */}
+        {page === "history" && (
+          <RiderOrderHistoryView
+            active={dashboard.active}
+            history={dashboard.history}
+            onSelectOrder={openOrderDetails}
+          />
+        )}
+
+        {/* SCREEN 11: MY PROFILE */}
+        {page === "profile" && (
+          <RiderProfileView
+            profile={dashboard.profile}
+            deliveriesToday={deliveriesToday}
+            online={online}
+            busy={busy}
+            onSaveProfile={saveProfile}
+            onToggleOnline={() => void toggleAvailability()}
+            onNavigate={(next) => setPage(next)}
+            onLogout={() => void logout()}
+          />
+        )}
+
+        {/* SCREEN 12: MORE HUB */}
+        {page === "more" && (
+          <RiderMoreView
+            unreadCount={unreadCount}
+            deliveriesToday={deliveriesToday}
+            onNavigate={(next) => setPage(next)}
+          />
+        )}
+
+        {page === "notifications" && (
+          <RiderNotificationsView
+            notifications={notifications}
+            onMarkAllRead={() => void markAllNotificationsRead()}
+          />
+        )}
+
+        {page === "support" && (
+          <RiderSupportView
+            busy={busy}
+            onSubmitTicket={submitSupportTicket}
+          />
+        )}
+      </main>
+
+      <RiderBottomNav
+        activeMain={activeMain}
+        queueCount={queueCount}
+        onNavigate={(next) => setPage(next)}
+      />
+    </div>
+  );
 }
-
-function Nav({active,icon,label,onClick}:{active:boolean;icon:string;label:string;onClick:()=>void}){return <button onClick={onClick} className={`grid flex-1 place-items-center gap-1 py-2 text-[10px] font-semibold ${active?"text-[#ff5b12]":"text-slate-400"}`}><span className="text-lg leading-none">{icon}</span>{label}</button>}
-function Header({title,onBack}:{title:string;onBack?:()=>void}){return <header className="flex h-16 items-center justify-between px-5"><button onClick={onBack} className={`grid h-9 w-9 place-items-center rounded-full text-xl ${onBack?"":"invisible"}`}>‹</button><h1 className="text-sm font-extrabold">{title}</h1><span className="w-9"/></header>}
-function Home({dashboard,onAvailability,onGo}:{dashboard:Dashboard;onAvailability:()=>void;onGo:(view:View)=>void}){const online=Boolean(dashboard.profile.rider_available);const today=dashboard.earnings.today;return <div><header className="flex items-center gap-3 px-5 pb-3 pt-5"><span className="grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br from-orange-200 to-amber-100 text-2xl">🛵</span><div className="min-w-0 flex-1"><h1 className="truncate text-sm font-extrabold">{dashboard.profile.full_name}</h1><p className="mt-1 text-[10px] text-slate-500">★ 4.8 &nbsp; (Delivery Partner)</p></div><span className="relative grid h-10 w-10 place-items-center rounded-xl bg-white text-lg shadow-sm">♧<i className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#ff5b12]"/></span></header><section className="mx-5 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#e7ffe9] to-[#f7fff0] p-4"><div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-200 text-lg">✓</div><div className="flex-1"><p className="text-sm font-extrabold">{online?"Online":"Offline"}</p><p className="mt-0.5 text-[10px] text-slate-500">{online?"You can receive new deliveries":"Go online to accept deliveries"}</p></div><button onClick={onAvailability} className={`relative h-6 w-11 rounded-full ${online?"bg-emerald-500":"bg-slate-300"}`}><i className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${online?"left-6":"left-1"}`}/></button></section><section className="grid grid-cols-2 gap-3 px-5 pt-5">{[["▣",String(today.deliveries||0),"Deliveries Today","bg-sky-50 text-sky-600"],["₹",money(today.earnings||0),"Today’s Earnings","bg-emerald-50 text-emerald-600"],["◷",dashboard.active.length?"Active":"—","Current Job","bg-orange-50 text-[#ff5b12]"],["♥","98%","Completion Rate","bg-rose-50 text-rose-500"]].map(([icon,value,label,color])=><div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100" key={label}><span className={`grid h-8 w-8 place-items-center rounded-xl text-sm ${color}`}>{icon}</span><p className="mt-2 text-lg font-extrabold">{value}</p><p className="text-[10px] text-slate-500">{label}</p></div>)}</section><button onClick={onAvailability} className={`mx-5 mt-5 w-[calc(100%-2.5rem)] rounded-xl py-3 text-sm font-extrabold text-white ${online?"bg-[#ff5b12]":"bg-emerald-600"}`}>{online?"Go Offline":"Go Online"}</button><section className="px-5 pb-5 pt-5"><div className="flex items-center justify-between"><h2 className="text-base font-extrabold">Today’s Incentives</h2><button onClick={()=>onGo("earnings")} className="text-xs font-bold text-[#ff5b12]">View earnings</button></div><div className="mt-3 rounded-2xl bg-gradient-to-r from-orange-50 to-amber-50 p-4"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-xl">⚙</span><div className="flex-1"><b className="block text-xs">Complete 10 deliveries</b><small className="text-[10px] text-slate-500">Earn a ₹100 bonus</small></div></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><i className="block h-full w-2/3 rounded-full bg-emerald-500"/></div></div></section>{dashboard.active.length>0&&<section className="mx-5 rounded-2xl border border-orange-100 bg-orange-50 p-4"><p className="text-xs font-extrabold">Active delivery</p><p className="mt-1 text-[11px] text-slate-600">{dashboard.active[0].order_no} · {dashboard.active[0].shop_name}</p><button onClick={()=>onGo("orders")} className="mt-2 text-xs font-bold text-[#ff5b12]">Open delivery ›</button></section>}</div>}
-function Orders({available,active,tab,onTab,onOpen}:{available:Delivery[];active:Delivery[];tab:"available"|"progress";onTab:(tab:"available"|"progress")=>void;onOpen:(order:Delivery)=>void}){const orders=tab==="available"?available:active;return <div><Header title="New Orders"/><div className="mx-5 flex rounded-xl bg-slate-100 p-1"><button onClick={()=>onTab("available")} className={`flex-1 rounded-lg py-2 text-[11px] font-bold ${tab==="available"?"bg-[#ff5b12] text-white":"text-slate-500"}`}>Available ({available.length})</button><button onClick={()=>onTab("progress")} className={`flex-1 rounded-lg py-2 text-[11px] font-bold ${tab==="progress"?"bg-[#ff5b12] text-white":"text-slate-500"}`}>In Progress ({active.length})</button></div><section className="space-y-3 px-5 pt-4">{orders.map(order=><button onClick={()=>onOpen(order)} className="w-full rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-100" key={order.id}><div className="flex items-start justify-between"><div><p className="text-sm font-extrabold">{order.order_no}</p><p className="mt-2 text-xs font-bold">{order.shop_name}</p><p className="mt-1 text-[10px] text-slate-500">⌖ {order.shop_address}</p></div><b className="text-sm">{money(order.delivery_fee_paise)}</b></div><div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 text-[10px] text-slate-500"><span>⌖</span><span className="flex-1">{order.item_count} items · {timeAgo(order.created_at)}</span><span className="rounded-lg bg-orange-100 px-2 py-1 font-bold text-[#ff5b12]">{tab==="available"?"View order":"Active"}</span></div></button>)}{!orders.length&&<div className="rounded-2xl bg-white px-5 py-14 text-center shadow-sm"><p className="text-4xl">🛵</p><p className="mt-3 text-sm font-bold">{tab==="available"?"No deliveries available":"No delivery in progress"}</p><p className="mt-1 text-xs text-slate-500">{tab==="available"?"New ready orders will appear here.":"Accepted deliveries appear here."}</p></div>}</section></div>}
-function OrderDetail({order,busy,onBack,onAccept,onPickup}:{order:Delivery;busy:boolean;onBack:()=>void;onAccept:()=>void;onPickup:()=>void}){const assigned=order.assignment_status==="assigned"||order.status==="assigned";const picked=order.assignment_status==="picked_up"||order.status==="out_for_delivery";return <div><Header title="Order Details" onBack={onBack}/><section className="space-y-4 px-5 pb-24"><div className="flex items-start justify-between"><h2 className="text-lg font-extrabold">{order.order_no}</h2><b className="text-base">{money(order.delivery_fee_paise)}</b></div><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><div className="flex items-center gap-3"><span className="grid h-12 w-12 place-items-center rounded-xl bg-orange-50 text-2xl">🏪</span><div className="min-w-0 flex-1"><b className="block text-sm">{order.shop_name}</b><small className="mt-1 block text-[10px] text-slate-500">{order.shop_address}</small></div>{order.shop_phone&&<a href={`tel:${order.shop_phone}`} className="grid h-9 w-9 place-items-center rounded-lg border border-emerald-200 text-emerald-600">⌕</a>}</div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h3 className="text-xs font-extrabold">Customer Details</h3><div className="mt-3 flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-orange-50 text-[#ff5b12]">♙</span><div className="min-w-0 flex-1"><b className="block text-sm">{order.customer_name}</b><small className="mt-1 block text-[10px] text-slate-500">{order.customer_phone||"Phone unavailable"}</small></div>{order.customer_phone&&<a href={`tel:${order.customer_phone}`} className="grid h-9 w-9 place-items-center rounded-lg border border-emerald-200 text-emerald-600">⌕</a>}</div><p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-600">⌖ {order.address_line}{order.landmark?`, ${order.landmark}`:""}</p></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><p className="text-xs font-extrabold">Items to pick up</p><p className="mt-2 text-xs text-slate-600">{order.item_count} item{order.item_count===1?"":"s"} in this order</p></section></section><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4">{!assigned&&!picked?<button disabled={busy} onClick={onAccept} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white disabled:opacity-60">{busy?"Accepting…":"Accept & Start Pickup"}</button>:<button onClick={onPickup} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white">{picked?"Continue Delivery":"Go to Pickup"}</button>}</div></div>}
-function Pickup({order,busy,onBack,onPickup}:{order:Delivery;busy:boolean;onBack:()=>void;onPickup:()=>void}){const [checked,setChecked]=useState(false);return <div><Header title="Pickup Order" onBack={onBack}/><div className="px-5 pb-24"><div className="mt-2 flex items-start justify-between">{["Accepted","Pickup","On the Way","Delivered"].map((label,index)=><div className="relative flex flex-1 flex-col items-center text-center" key={label}>{index<3&&<i className={`absolute left-1/2 top-3 h-0.5 w-full ${index<1?"bg-emerald-500":"bg-slate-200"}`}/>}<span className={`z-10 grid h-6 w-6 place-items-center rounded-full text-[10px] ${index<1?"bg-emerald-500 text-white":index===1?"bg-[#ff5b12] text-white":"bg-slate-200 text-slate-400"}`}>{index<1?"✓":index+1}</span><small className="mt-2 text-[9px] font-bold text-slate-500">{label}</small></div>)}</div><section className="mt-8 rounded-3xl bg-gradient-to-b from-orange-50 to-amber-100 p-5 text-center"><div className="text-7xl">🏪</div><h2 className="mt-4 text-lg font-extrabold">{order.shop_name}</h2><p className="mt-1 text-xs text-slate-600">{order.shop_address}</p>{order.shop_phone&&<a href={`tel:${order.shop_phone}`} className="mt-4 inline-flex rounded-xl border border-emerald-300 bg-white px-4 py-2 text-xs font-bold text-emerald-600">Call Shop</a>}</section><section className="mt-5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><p className="text-xs font-extrabold">Items to pick up</p><p className="mt-2 text-xs text-slate-600">Please collect and verify all {order.item_count} items.</p><label className="mt-4 flex items-center gap-3 text-xs font-bold"><input checked={checked} onChange={event=>setChecked(event.target.checked)} type="checkbox" className="h-5 w-5 accent-[#ff5b12]"/>I have picked up all items</label></section></div><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4"><button disabled={!checked||busy} onClick={onPickup} className="w-full rounded-xl bg-[#ff5b12] py-3.5 text-sm font-extrabold text-white disabled:opacity-40">{busy?"Confirming…":"Start Delivery"}</button></div></div>}
-function Deliver({order,busy,onBack,onDelivered}:{order:Delivery;busy:boolean;onBack:()=>void;onDelivered:()=>void}){return <div><Header title="Deliver to Customer" onBack={onBack}/><section className="mx-5 mt-2 grid h-56 place-items-center rounded-3xl bg-gradient-to-br from-sky-100 via-emerald-50 to-orange-100"><div className="text-center"><div className="text-6xl">⌖</div><p className="mt-2 rounded-xl bg-white px-4 py-2 text-xs font-bold shadow">Navigate to customer</p></div></section><section className="mx-5 mt-5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><div className="flex items-center justify-between"><b className="text-sm">{order.order_no}</b><b className="text-sm">{money(order.delivery_fee_paise)}</b></div><div className="mt-4 flex gap-3 border-t border-slate-100 pt-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-orange-50 text-[#ff5b12]">♙</span><div className="min-w-0 flex-1"><b className="block text-xs">{order.customer_name}</b><small className="mt-1 block text-[10px] text-slate-500">{order.customer_phone||"Phone unavailable"}</small></div>{order.customer_phone&&<a href={`tel:${order.customer_phone}`} className="grid h-9 w-9 place-items-center rounded-lg border border-emerald-200 text-emerald-600">⌕</a>}</div><p className="mt-3 text-xs text-slate-600">⌖ {order.address_line}{order.landmark?`, ${order.landmark}`:""}</p><button onClick={()=>window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address_line)}`,"_blank")} className="mt-4 w-full rounded-xl bg-sky-50 py-3 text-xs font-bold text-sky-600">⌖ Navigate</button></section><div className="fixed bottom-0 left-0 right-0 z-20 mx-auto max-w-[480px] border-t border-slate-100 bg-white p-4"><button disabled={busy} onClick={onDelivered} className="w-full rounded-xl bg-emerald-600 py-3.5 text-sm font-extrabold text-white disabled:opacity-60">{busy?"Completing…":"Mark as Delivered"}</button></div></div>}
-function Earnings({dashboard,range,onRange}:{dashboard:Dashboard;range:"today"|"week";onRange:(range:"today"|"week")=>void}){const data=dashboard.earnings[range];const bars=range==="today"?[20,45,60,30,70,54,82]:[40,60,44,75,67,90,74];return <div><Header title="Earnings"/><div className="mx-5 flex rounded-xl bg-slate-100 p-1"><button onClick={()=>onRange("today")} className={`flex-1 rounded-lg py-2 text-[11px] font-bold ${range==="today"?"bg-[#ff5b12] text-white":"text-slate-500"}`}>Daily</button><button onClick={()=>onRange("week")} className={`flex-1 rounded-lg py-2 text-[11px] font-bold ${range==="week"?"bg-[#ff5b12] text-white":"text-slate-500"}`}>Weekly</button></div><section className="space-y-4 px-5 pb-6 pt-5"><div className="rounded-2xl bg-gradient-to-r from-[#ddffe2] to-[#f2fff0] p-5"><p className="text-2xl font-extrabold text-emerald-700">{money(data.earnings||0)}</p><p className="mt-1 text-xs text-emerald-700">{range==="today"?"Today’s":"This week’s"} Earnings</p><span className="float-right -mt-10 grid h-11 w-11 place-items-center rounded-full bg-white text-xl">▥</span></div><div className="grid grid-cols-2 gap-3"><Metric value={String(data.deliveries||0)} label="Deliveries"/><Metric value={data.deliveries?money(Math.round(Number(data.earnings)/Number(data.deliveries))):money(0)} label="Avg. per Delivery"/><Metric value={money(0)} label="Incentives"/><Metric value={money(data.earnings||0)} label="Total Earnings"/></div><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Earnings Overview</h2><div className="mt-6 flex h-32 items-end gap-2">{bars.map((bar,index)=><div className="flex flex-1 flex-col items-center gap-2" key={index}><i className="w-full rounded-t bg-gradient-to-t from-[#ff5b12] to-orange-300" style={{height:`${bar}%`}}/><small className="text-[8px] text-slate-400">{index+1}</small></div>)}</div></section><section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><h2 className="text-sm font-extrabold">Recent Deliveries</h2>{dashboard.history.slice(0,4).map(order=><div className="mt-3 flex items-center gap-3 text-xs" key={order.id}><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50">🛵</span><span className="min-w-0 flex-1"><b className="block truncate">{order.order_no}</b><small className="block truncate text-[10px] text-slate-500">{order.shop_name}</small></span><b>{money(order.delivery_fee_paise)}</b></div>)}{!dashboard.history.length&&<p className="mt-3 text-xs text-slate-500">Completed deliveries will appear here.</p>}</section></section></div>}
-function Metric({value,label}:{value:string;label:string}){return <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100"><p className="text-base font-extrabold">{value}</p><p className="mt-1 text-[10px] text-slate-500">{label}</p></div>}
-function Profile({rider,onGo}:{rider:Rider;onGo:(view:View)=>void}){const initial=rider.full_name.charAt(0).toUpperCase()||"R";return <div><Header title="My Profile"/><section className="mx-5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"><div className="flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-emerald-100 to-orange-100 text-xl font-extrabold text-emerald-700">{initial}</span><div className="flex-1"><h2 className="text-sm font-extrabold">{rider.full_name}</h2><p className="mt-1 text-[10px] text-slate-500">★ 4.8 (Delivery Partner)</p></div><button onClick={()=>onGo("more")} className="text-xs font-bold text-[#ff5b12]">More</button></div></section><section className="mx-5 mt-4 divide-y divide-slate-100 rounded-2xl bg-white px-4 shadow-sm ring-1 ring-slate-100"><Row icon="♙" label="Personal Information"/><Row icon="▣" label="Vehicle Details" detail="Add bike and licence details"/><Row icon="▥" label="Bank Account" detail="Add UPI / bank details"/><Row icon="⚙" label="Availability Settings"/></section></div>}
-function Row({icon,label,detail}:{icon:string;label:string;detail?:string}){return <div className="flex items-center gap-3 py-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50 text-[#ff5b12]">{icon}</span><span className="flex-1"><b className="block text-sm">{label}</b>{detail&&<small className="mt-0.5 block text-[10px] text-slate-500">{detail}</small>}</span><span className="text-slate-400">›</span></div>}
-function More({rider,onGo,onLogout}:{rider:Rider;onGo:(view:View)=>void;onLogout:()=>void}){return <div><Header title="More"/><section className="mx-5 divide-y divide-slate-100 rounded-2xl bg-white px-4 shadow-sm ring-1 ring-slate-100"><button onClick={()=>onGo("profile")} className="flex w-full items-center gap-3 py-4 text-left"><span className="grid h-8 w-8 place-items-center rounded-lg bg-orange-50 text-[#ff5b12]">♧</span><b className="flex-1 text-sm">Notifications</b><span className="text-slate-400">›</span></button><Row icon="▦" label="Incentives & Offers"/><Row icon="⌖" label="Service Areas"/><Row icon="?" label="Help & Support"/><Row icon="⚙" label="App Settings"/><Row icon="ⓘ" label="About Pavagada One"/></section><section className="mx-5 mt-5 rounded-2xl bg-gradient-to-r from-lime-100 to-orange-100 p-4"><p className="text-lg font-extrabold text-emerald-700">Deliver.<br/>Earn. Grow.</p><p className="mt-1 text-xs text-[#ff5b12]">With Pavagada One</p><span className="float-right -mt-12 text-6xl">🛵</span></section><button onClick={onLogout} className="mx-5 mt-5 w-[calc(100%-2.5rem)] rounded-xl border border-rose-300 py-3 text-sm font-extrabold text-rose-600">Logout</button></div>}

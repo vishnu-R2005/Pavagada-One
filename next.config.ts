@@ -1,2 +1,7 @@
 import type { NextConfig } from "next";
-export default {} satisfies NextConfig;
+
+const nextConfig: NextConfig = {
+  output: "standalone",
+};
+
+export default nextConfig;

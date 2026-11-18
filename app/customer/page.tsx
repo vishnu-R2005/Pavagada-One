@@ -1,42 +1,556 @@
 "use client";
 
 import Link from "next/link";
-import {useEffect,useMemo,useState} from "react";
-import {CustomerNav} from "@/components/customer-nav";
-import {ProductImage as ProductThumbnail} from "@/components/product-image";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Apple,
+  ArrowRight,
+  Clock,
+  Cookie,
+  Croissant,
+  Cross,
+  Drumstick,
+  LayoutGrid,
+  Milk,
+  Plus,
+  Search,
+  ShoppingBag,
+  ShoppingBasket,
+  Star,
+  Store,
+  X,
+} from "lucide-react";
+import { CustomerHeader, CustomerNav } from "@/components/customer-nav";
+import { ProductImage } from "@/components/product-image";
+import { apiFetch } from "@/lib/client-session";
+import { formatRupees, matchQuickCategoryId } from "@/lib/customer-ui";
 
-type Category={id:string;name:string;image_url?:string|null};
-type Shop={id:string;name:string;address:string;image_url?:string|null;opening_hours?:string|null};
-type Product={id:string;shop_id:string;category_id?:string|null;name:string;description?:string|null;price_paise:number;quantity:number;image_url?:string|null;unit?:string|null};
-type Cart={item_id:string;quantity:number};
+type Category = { id: string; name: string; image_url?: string | null };
+type Shop = {
+  id: string;
+  name: string;
+  address: string;
+  image_url?: string | null;
+  opening_hours?: string | null;
+  is_open?: number;
+};
+type Product = {
+  id: string;
+  shop_id: string;
+  category_id?: string | null;
+  name: string;
+  description?: string | null;
+  price_paise: number;
+  quantity: number;
+  image_url?: string | null;
+  unit?: string | null;
+};
+type Cart = { item_id: string; product_id: string; quantity: number };
 
-const money=(paise:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format((Number(paise)||0)/100);
-const iconFor=(name:string)=>{const value=name.toLowerCase();if(value.includes("fruit")||value.includes("veget"))return "🍊";if(value.includes("milk")||value.includes("dairy"))return "🥛";if(value.includes("bakery"))return "🥖";if(value.includes("pharm"))return "💊";if(value.includes("meat")||value.includes("egg"))return "🥚";if(value.includes("snack"))return "🍪";return "🛍️"};
-const productIcon=(name:string)=>{const value=name.toLowerCase();if(value.includes("milk"))return "🥛";if(value.includes("oil"))return "🫗";if(value.includes("salt"))return "🧂";if(value.includes("atta")||value.includes("flour"))return "🌾";return "🛒"};
+const QUICK_CATEGORIES = [
+  {
+    key: "groceries",
+    label: "Groceries",
+    keywords: ["grocer", "staple", "atta", "oil"],
+    icon: ShoppingBasket,
+    bg: "bg-[#ECFDF5]",
+    tint: "text-[#15803D]",
+  },
+  {
+    key: "fruits",
+    label: "Fruits & Vegetables",
+    keywords: ["fruit", "veget", "fresh", "produce"],
+    icon: Apple,
+    bg: "bg-[#FFF1F2]",
+    tint: "text-[#E11D48]",
+  },
+  {
+    key: "dairy",
+    label: "Milk & Dairy",
+    keywords: ["milk", "dairy", "egg", "curd"],
+    icon: Milk,
+    bg: "bg-[#EFF6FF]",
+    tint: "text-[#2563EB]",
+  },
+  {
+    key: "snacks",
+    label: "Snacks",
+    keywords: ["snack", "noodle", "biscuit", "tea"],
+    icon: Cookie,
+    bg: "bg-[#FEFCE8]",
+    tint: "text-[#CA8A04]",
+  },
+  {
+    key: "bakery",
+    label: "Bakery",
+    keywords: ["bak", "cake", "bread"],
+    icon: Croissant,
+    bg: "bg-[#FFF7ED]",
+    tint: "text-[#EA580C]",
+  },
+  {
+    key: "meat",
+    label: "Meat & Eggs",
+    keywords: ["meat", "egg", "chicken"],
+    icon: Drumstick,
+    bg: "bg-[#FEF2F2]",
+    tint: "text-[#DC2626]",
+  },
+  {
+    key: "pharmacy",
+    label: "Pharmacy",
+    keywords: ["pharm", "med", "health", "care"],
+    icon: Cross,
+    bg: "bg-[#F0FDFA]",
+    tint: "text-[#0D9488]",
+  },
+  {
+    key: "more",
+    label: "More",
+    keywords: [],
+    icon: LayoutGrid,
+    bg: "bg-[#F5F5F4]",
+    tint: "text-stone-700",
+  },
+] as const;
 
-async function api<T>(url:string,init?:RequestInit):Promise<T>{const response=await fetch(url,init);const body=await response.json().catch(()=>({error:"Unable to read the server response."}));if(!response.ok)throw new Error(body.error||"Something went wrong.");return body as T;}
-
-export default function CustomerHome(){
-  const [categories,setCategories]=useState<Category[]>([]);
-  const [shops,setShops]=useState<Shop[]>([]);
-  const [products,setProducts]=useState<Product[]>([]);
-  const [cart,setCart]=useState<Cart[]>([]);
-  const [activeCategory,setActiveCategory]=useState("");
-  const [search,setSearch]=useState("");
-  const [notice,setNotice]=useState("");
-  const [loading,setLoading]=useState(true);
-  const [locationName,setLocationName]=useState("Pavagada Town");
-
-  async function load(){
-    setLoading(true);
-    try{const [catalog,basket]=await Promise.all([api<{categories:Category[];shops:Shop[];products:Product[]}>("/api/catalog"),api<{items:Cart[]}>("/api/cart")]);setCategories(catalog.categories??[]);setShops(catalog.shops??[]);setProducts(catalog.products??[]);setCart(basket.items??[]);}catch(error){setNotice(error instanceof Error?error.message:"Unable to load shops right now.");}finally{setLoading(false);}}
-  useEffect(()=>{setLocationName(window.localStorage.getItem("pavagada_delivery_area")||"Pavagada Town");void load();},[]);
-  async function add(productId:string){try{await api("/api/cart",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({productId,quantity:1})});setNotice("Added to your cart.");await load();}catch(error){setNotice(error instanceof Error?error.message:"Unable to update your cart.");}}
-  const filteredProducts=useMemo(()=>products.filter(product=>(!activeCategory||product.category_id===activeCategory)&&(!search||product.name.toLowerCase().includes(search.toLowerCase()))),[products,activeCategory,search]);
-  const shopProducts=(shopId:string)=>filteredProducts.filter(product=>product.shop_id===shopId);
-  const cartItems=cart.reduce((sum,item)=>sum+Number(item.quantity),0);
-
-  return <main className="min-h-screen bg-[#fff3e5] text-slate-900 md:p-6"><div className="mx-auto min-h-screen max-w-[480px] bg-[#fffdfa] shadow-2xl shadow-orange-950/10 md:min-h-[820px] md:rounded-[2rem]"><header className="flex items-center gap-3 px-5 pb-3 pt-5"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-orange-50 text-lg text-[#ff5b12]">⌖</span><div className="min-w-0 flex-1"><p className="text-xs text-slate-500">Delivering to</p><Link href="/customer/location" className="mt-0.5 flex items-center gap-1 text-sm font-extrabold">{locationName} <span className="text-xs">⌄</span></Link></div><Link href="/customer/notifications" aria-label="Notifications" className="relative grid h-10 w-10 place-items-center rounded-xl bg-white text-lg shadow-sm">♧<i className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#ff5b12]"/></Link></header><div className="px-5"><label className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-3 text-slate-400"><span>⌕</span><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search for shops or products..." className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400"/></label></div>{notice&&<button onClick={()=>setNotice("")} className="mx-5 mt-3 w-[calc(100%-2.5rem)] rounded-xl bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white">✓ {notice}</button>}<section className="mx-5 mt-4 overflow-hidden rounded-3xl bg-gradient-to-r from-lime-100 via-lime-50 to-amber-100 p-5"><div className="relative min-h-24"><p className="max-w-[190px] text-xl font-extrabold leading-6">Fresh Groceries<br/>to your Home</p><p className="mt-2 max-w-[190px] text-[10px] text-slate-600">From local shops in Pavagada</p><Link href="/customer/shops" className="mt-3 inline-flex rounded-xl bg-[#ff5b12] px-3 py-2 text-[11px] font-extrabold text-white">Order Now →</Link><span className="absolute bottom-0 right-1 text-6xl">🧺</span><span className="absolute right-14 top-1 text-3xl">🥬</span><span className="absolute right-4 top-4 text-2xl">🍅</span></div></section><section className="px-5 pt-5"><div className="grid grid-cols-4 gap-3">{categories.slice(0,8).map(category=><button onClick={()=>setActiveCategory(activeCategory===category.id?"":category.id)} className="grid place-items-center gap-1.5" key={category.id}><span className={`grid h-14 w-14 place-items-center rounded-2xl text-2xl shadow-sm ${activeCategory===category.id?"bg-orange-100 ring-2 ring-orange-300":"bg-white"}`}>{iconFor(category.name)}</span><span className="line-clamp-2 text-center text-[10px] font-semibold leading-3 text-slate-600">{category.name}</span></button>)}{!categories.length&&<p className="col-span-4 rounded-xl bg-slate-50 py-4 text-center text-xs text-slate-500">Categories will appear here.</p>}</div></section><section className="px-5 pb-2 pt-6"><div className="flex items-center justify-between"><h2 className="text-base font-extrabold">Popular Shops</h2><Link href="/customer/shops" className="text-xs font-bold text-[#ff5b12]">See All</Link></div><div className="mt-3 space-y-3">{loading?<p className="py-5 text-center text-sm text-slate-500">Loading nearby shops…</p>:shops.slice(0,4).map(shop=>{const count=shopProducts(shop.id).length;return <Link key={shop.id} href={`/customer/shops/${shop.id}`} className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100"><ShopImage shop={shop}/><div className="min-w-0 flex-1"><p className="truncate text-xs font-extrabold">{shop.name}</p><p className="mt-1 truncate text-[10px] text-slate-500">Groceries, Daily Needs</p><p className="mt-1 text-[10px] font-semibold text-slate-600">★ 4.5 &nbsp; ◷ 20–30 mins</p></div><span className="rounded-lg bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">{count?"Open":"View"}</span></Link>})}{!loading&&!shops.length&&<p className="rounded-2xl bg-white p-5 text-center text-sm text-slate-500">No shops are open yet.</p>}</div></section><section className="px-5 pb-24 pt-5"><div className="flex items-center justify-between"><h2 className="text-base font-extrabold">Popular essentials</h2><Link href="/customer/shops" className="text-xs font-bold text-[#ff5b12]">Browse shops</Link></div><div className="mt-3 grid grid-cols-2 gap-3">{filteredProducts.slice(0,6).map(product=><article className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100" key={product.id}><Link href={`/customer/products/${product.id}`}><ProductThumbnail src={product.image_url} name={product.name} className="h-24 w-full rounded-xl object-cover"/><h3 className="mt-2 line-clamp-1 text-xs font-extrabold">{product.name}</h3><p className="mt-1 text-[10px] text-slate-500">{product.unit||"Local favourite"}</p></Link><div className="mt-3 flex items-center justify-between"><b className="text-sm">{money(product.price_paise)}</b><button onClick={()=>void add(product.id)} className="rounded-lg bg-[#ff5b12] px-3 py-1.5 text-[11px] font-extrabold text-white">Add</button></div></article>)}{!loading&&!filteredProducts.length&&<p className="col-span-2 rounded-2xl bg-white p-5 text-center text-sm text-slate-500">No products match your search.</p>}</div></section>{cartItems>0&&<Link href="/customer/cart" className="fixed bottom-16 left-1/2 z-20 flex w-[calc(100%-2.5rem)] max-w-[440px] -translate-x-1/2 items-center justify-between rounded-2xl bg-[#ff5b12] px-4 py-3 text-white shadow-lg shadow-orange-200"><span className="text-xs font-bold">{cartItems} item{cartItems===1?"":"s"} added</span><b className="text-sm">View Cart →</b></Link>}<CustomerNav/></div></main>;
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(url, init);
+  const body = await response
+    .json()
+    .catch(() => ({ error: "Unable to read the server response." }));
+  if (!response.ok) throw new Error(body.error || "Something went wrong.");
+  return body as T;
 }
 
-function ShopImage({shop}:{shop:Shop}){return shop.image_url?<img alt="" src={shop.image_url} className="h-14 w-14 rounded-xl object-cover"/>:<div className="grid h-14 w-14 place-items-center rounded-xl bg-gradient-to-br from-orange-100 to-lime-100 text-2xl">🏪</div>}
+export default function CustomerHome() {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cart, setCart] = useState<Cart[]>([]);
+  const [activeCategory, setActiveCategory] = useState("");
+  const [activeQuickKey, setActiveQuickKey] = useState("");
+  const [search, setSearch] = useState("");
+  const [notice, setNotice] = useState<{ text: string; tone: "ok" | "err" } | null>(
+    null
+  );
+  const [conflictProductId, setConflictProductId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [locationName, setLocationName] = useState("Pavagada Town");
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [catalog, basket] = await Promise.all([
+        api<{ categories: Category[]; shops: Shop[]; products: Product[] }>(
+          "/api/catalog"
+        ),
+        api<{ items: Cart[] }>("/api/cart?optional=1").catch(() => ({ items: [] })),
+      ]);
+      setCategories(catalog.categories ?? []);
+      setShops(catalog.shops ?? []);
+      setProducts(catalog.products ?? []);
+      setCart(basket.items ?? []);
+    } catch (error) {
+      setNotice({
+        text:
+          error instanceof Error
+            ? error.message
+            : "Unable to load shops right now.",
+        tone: "err",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setLocationName(
+      window.localStorage.getItem("pavagada_delivery_area") || "Pavagada Town"
+    );
+    void load();
+  }, []);
+
+  async function add(productId: string) {
+    setConflictProductId(null);
+    try {
+      await api("/api/cart", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ productId, quantity: 1 }),
+      });
+      setNotice({ text: "Added to your cart.", tone: "ok" });
+      await load();
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "Unable to update your cart.";
+      if (msg.toLowerCase().includes("one shop")) {
+        setConflictProductId(productId);
+      }
+      setNotice({ text: msg, tone: "err" });
+    }
+  }
+
+  async function switchShopAndAdd() {
+    if (!conflictProductId) return;
+    await api("/api/cart", { method: "DELETE" });
+    const id = conflictProductId;
+    setConflictProductId(null);
+    await add(id);
+  }
+
+  function handleQuickCategory(item: (typeof QUICK_CATEGORIES)[number]) {
+    if (item.key === "more" || activeQuickKey === item.key) {
+      setActiveQuickKey("");
+      setActiveCategory("");
+      return;
+    }
+    setActiveQuickKey(item.key);
+    const matchedId = matchQuickCategoryId([...item.keywords], categories);
+    setActiveCategory(matchedId);
+    if (!matchedId) {
+      setSearch(item.label.split("&")[0].trim());
+    } else {
+      setSearch("");
+    }
+  }
+
+  const shopMap = useMemo(
+    () => new Map(shops.map((s) => [s.id, s])),
+    [shops]
+  );
+
+  const filteredShops = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return shops;
+    return shops.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) || s.address.toLowerCase().includes(q)
+    );
+  }, [shops, search]);
+
+  const filteredProducts = useMemo(
+    () =>
+      products.filter((product) => {
+        const matchCat = !activeCategory || product.category_id === activeCategory;
+        const q = search.trim().toLowerCase();
+        const shop = shopMap.get(product.shop_id);
+        const matchQuery =
+          !q ||
+          product.name.toLowerCase().includes(q) ||
+          (product.description ?? "").toLowerCase().includes(q) ||
+          (shop?.name ?? "").toLowerCase().includes(q);
+        return matchCat && matchQuery;
+      }),
+    [products, activeCategory, search, shopMap]
+  );
+
+  const cartItems = cart.reduce((sum, item) => sum + Number(item.quantity), 0);
+
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] text-stone-900 pb-24 md:pb-12">
+      <CustomerHeader locationName={locationName} cartCount={cartItems} />
+
+      <main className="mx-auto max-w-6xl px-4 pt-4 md:px-8 md:pt-6 space-y-6">
+        {/* Search Bar */}
+        <label className="flex items-center gap-2.5 rounded-2xl border border-stone-200/80 bg-[#F4F4F5] px-4 py-3 focus-within:border-[#FF5A1F] focus-within:bg-white transition-colors">
+          <Search className="h-4 w-4 text-stone-400 shrink-0" />
+          <input
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              if (!event.target.value) setActiveQuickKey("");
+            }}
+            placeholder="Search for shops or products…"
+            className="w-full bg-transparent text-sm text-stone-900 outline-none placeholder:text-stone-400"
+          />
+          {(search || activeCategory || activeQuickKey) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setActiveCategory("");
+                setActiveQuickKey("");
+              }}
+              aria-label="Clear search and filters"
+              className="text-stone-400 hover:text-stone-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </label>
+
+        {notice && (
+          <div
+            className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-xs font-semibold ${
+              notice.tone === "ok"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-rose-200 bg-rose-50 text-rose-900"
+            }`}
+          >
+            <span>{notice.text}</span>
+            <div className="flex items-center gap-3">
+              {notice.text.toLowerCase().includes("unauthenticated") && (
+                <Link
+                  href="/sign-in"
+                  className="rounded-xl bg-[#FF5A1F] px-3 py-1.5 text-xs font-bold text-white"
+                >
+                  Sign in to add
+                </Link>
+              )}
+              {conflictProductId && (
+                <button
+                  type="button"
+                  onClick={() => void switchShopAndAdd()}
+                  className="rounded-xl bg-[#FF5A1F] px-3 py-1.5 text-xs font-bold text-white"
+                >
+                  Clear cart & switch shop
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setNotice(null);
+                  setConflictProductId(null);
+                }}
+                aria-label="Dismiss notice"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Promo Hero Banner (Screen 3) */}
+        <section className="overflow-hidden rounded-3xl border border-[#15803D]/10 bg-gradient-to-r from-[#DCECD4] via-[#ECF4E3] to-[#FDF5EA]">
+          <div className="grid grid-cols-12 items-center">
+            <div className="col-span-7 p-5 sm:p-7 md:col-span-8">
+              <h1 className="text-xl font-extrabold leading-tight tracking-tight text-stone-900 sm:text-3xl [text-wrap:balance]">
+                Fresh Groceries to your Home
+              </h1>
+              <p className="mt-1.5 text-xs font-medium text-stone-700 sm:text-sm">
+                From local shops in Pavagada · Code{" "}
+                <span className="font-mono font-bold text-[#15803D]">
+                  PAVAGADA50
+                </span>
+              </p>
+              <div className="mt-4">
+                <Link
+                  href="/customer/shops"
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#FF5A1F] px-4 py-2 text-xs font-bold text-white shadow-sm shadow-[#FF5A1F]/25 transition hover:bg-[#E54910]"
+                >
+                  <span>Order Now</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+            </div>
+            <div className="col-span-5 h-full md:col-span-4">
+              <img
+                src="/images/hero-market.jpg"
+                alt="Fresh produce basket from Pavagada local markets"
+                referrerPolicy="no-referrer"
+                className="h-36 w-full object-cover sm:h-48 md:h-56"
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* 4x2 Quick Category Grid (Screen 3) */}
+        <section aria-label="Quick categories">
+          <div className="grid grid-cols-4 gap-3 sm:gap-4 md:grid-cols-8">
+            {QUICK_CATEGORIES.map((item) => {
+              const Icon = item.icon;
+              const isSelected = activeQuickKey === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => handleQuickCategory(item)}
+                  className="group flex flex-col items-center text-center"
+                >
+                  <span
+                    className={`grid h-16 w-full max-w-[74px] place-items-center rounded-2xl transition ${
+                      item.bg
+                    } ${
+                      isSelected
+                        ? "ring-2 ring-[#FF5A1F]"
+                        : "ring-1 ring-black/[0.04] group-hover:ring-[#FF5A1F]/40"
+                    }`}
+                  >
+                    <Icon className={`h-7 w-7 ${item.tint}`} strokeWidth={2} />
+                  </span>
+                  <span
+                    className={`mt-1.5 line-clamp-2 text-[11px] font-semibold leading-tight ${
+                      isSelected ? "text-[#FF5A1F]" : "text-stone-700"
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Popular Shops (Screen 3) */}
+        <section>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-extrabold tracking-tight text-stone-900">
+              Popular Shops
+            </h2>
+            <Link
+              href="/customer/shops"
+              className="text-xs font-bold text-[#FF5A1F] hover:underline whitespace-nowrap"
+            >
+              See All
+            </Link>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {loading ? (
+              <div className="col-span-full rounded-2xl border border-stone-200/80 bg-white p-8 text-center text-sm text-stone-500">
+                Loading nearby shops…
+              </div>
+            ) : filteredShops.length > 0 ? (
+              filteredShops.slice(0, 6).map((shop) => (
+                <Link
+                  key={shop.id}
+                  href={`/customer/shops/${shop.id}`}
+                  className="flex items-center gap-3.5 rounded-2xl border border-stone-200/80 bg-white p-3.5 transition hover:border-[#FF5A1F]/40 hover:shadow-xs"
+                >
+                  {shop.image_url ? (
+                    <img
+                      alt={shop.name}
+                      src={shop.image_url}
+                      referrerPolicy="no-referrer"
+                      className="h-16 w-16 rounded-xl object-cover shrink-0"
+                    />
+                  ) : (
+                    <div className="grid h-16 w-16 place-items-center rounded-xl bg-[#FFF4EE] text-[#FF5A1F] shrink-0">
+                      <Store className="h-7 w-7" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="truncate text-sm font-bold text-stone-900">
+                        {shop.name}
+                      </h3>
+                      <span
+                        className={`text-[11px] font-bold shrink-0 ${
+                          shop.is_open ? "text-[#15803D]" : "text-stone-400"
+                        }`}
+                      >
+                        {shop.is_open ? "Open" : "Closed"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-stone-500">
+                      {shop.address}
+                    </p>
+                    <p className="mt-1.5 flex items-center gap-2 text-xs font-medium text-stone-600">
+                      <span className="inline-flex items-center gap-1">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
+                        4.5
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5 text-stone-400" />
+                        {shop.opening_hours || "20–30 mins"}
+                      </span>
+                    </p>
+                  </div>
+                </Link>
+              ))
+            ) : (
+              <div className="col-span-full rounded-2xl border border-stone-200/80 bg-white p-8 text-center text-sm text-stone-500">
+                No matching shops available right now.
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Popular Essentials Grid */}
+        <section>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-extrabold tracking-tight text-stone-900">
+              {activeCategory || activeQuickKey ? "Filtered Essentials" : "Popular Essentials"}
+            </h2>
+            <span className="text-xs font-medium text-stone-500 tabular-nums">
+              {filteredProducts.length} items
+            </span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-4">
+            {filteredProducts.map((product) => {
+              const shop = shopMap.get(product.shop_id);
+              return (
+                <article
+                  key={product.id}
+                  className="flex flex-col rounded-2xl border border-stone-200/80 bg-white p-3 transition hover:border-[#FF5A1F]/40 hover:shadow-xs"
+                >
+                  <Link
+                    href={`/customer/products/${product.id}`}
+                    className="block flex-1"
+                  >
+                    <ProductImage
+                      src={product.image_url}
+                      name={product.name}
+                      className="aspect-[4/3] w-full rounded-xl object-cover"
+                    />
+                    <p className="mt-2 truncate text-[11px] font-medium text-stone-500">
+                      {shop?.name || "Local Shop"} · {product.unit || "Standard"}
+                    </p>
+                    <h3 className="mt-0.5 line-clamp-1 text-sm font-bold text-stone-900">
+                      {product.name}
+                    </h3>
+                  </Link>
+
+                  <div className="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-stone-100">
+                    <span className="tabular-nums font-mono text-sm font-bold text-stone-900">
+                      {formatRupees(product.price_paise)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void add(product.id)}
+                      className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[#FF5A1F] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#E54910]"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Add</span>
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+
+            {!loading && !filteredProducts.length && (
+              <div className="col-span-full rounded-2xl border border-stone-200/80 bg-white p-10 text-center text-sm text-stone-500">
+                No products match your search or category filter.
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+
+      {cartItems > 0 && (
+        <div className="fixed bottom-16 left-0 right-0 z-20 px-4 md:bottom-6 md:left-auto md:right-8 md:w-80 md:px-0">
+          <Link
+            href="/customer/cart"
+            className="flex min-h-[48px] items-center justify-between rounded-2xl bg-[#FF5A1F] px-4 py-3 text-white shadow-lg shadow-[#FF5A1F]/25 transition hover:bg-[#E54910]"
+          >
+            <span className="inline-flex items-center gap-2 text-xs font-bold">
+              <ShoppingBag className="h-4 w-4" />
+              <span className="tabular-nums">
+                {cartItems} item{cartItems === 1 ? "" : "s"} in cart
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs font-bold">
+              <span>View Cart</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </span>
+          </Link>
+        </div>
+      )}
+
+      <CustomerNav />
+    </div>
+  );
+}

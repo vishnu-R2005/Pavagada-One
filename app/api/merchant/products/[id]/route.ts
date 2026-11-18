@@ -3,7 +3,7 @@ import {z} from "zod";
 import {currentUser,audit} from "@/lib/auth";
 import {query} from "@/lib/db";
 
-const imageRef=z.string().max(650_000).refine(value=>/^https?:\/\//i.test(value)||/^data:image\/(png|jpeg|webp);base64,/i.test(value),"Invalid image");
+const imageRef=z.string().max(650_000).refine(value=>/^https?:\/\//i.test(value)||/^data:image\/(png|jpeg|webp);base64,/i.test(value)||value.startsWith("/images/"),"Invalid image");
 
 const S=z.object({
   name:z.string().trim().min(2).max(120),
