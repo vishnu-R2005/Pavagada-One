@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2, Shield, ShoppingBag, Store, Truck } from "lucide-react";
 import { apiFetch, writeSessionToken } from "@/lib/client-session";
@@ -26,8 +26,8 @@ const DEMO_ACCOUNTS = [
   },
   {
     role: "Admin",
-    email: "admin@pavagadaone.local",
-    pass: "Admin@1234",
+    email: "admin@gmail.com",
+    pass: "admin@4432",
     icon: Shield,
   },
 ] as const;
@@ -36,6 +36,11 @@ export function AuthForm({ register = false }: { register?: boolean }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   async function authenticate(payload: Record<string, unknown>, isRegister: boolean) {
     setError("");
@@ -76,7 +81,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} className="space-y-4">
+      <form method="post" onSubmit={submit} className="space-y-4">
         {register && (
           <>
             <label className="block text-xs font-semibold text-[#14221B]/80">
@@ -133,7 +138,8 @@ export function AuthForm({ register = false }: { register?: boolean }) {
         )}
 
         <button
-          disabled={busy}
+          type="submit"
+          disabled={busy || !hydrated}
           className="flex min-h-[46px] w-full items-center justify-center gap-2 rounded-xl bg-[#0F5132] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0B3D25] disabled:opacity-60"
         >
           {busy ? (

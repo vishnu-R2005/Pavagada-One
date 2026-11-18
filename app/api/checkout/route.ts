@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { currentUser, audit } from "@/lib/auth";
 import { requireDb, query } from "@/lib/db";
 import { checkoutSchema } from "@/lib/validation";
+import {
+  DELIVERY_FEE_PAISE,
+  evaluateCouponDiscount,
+  FREE_DELIVERY_THRESHOLD_PAISE,
+} from "@/lib/customer-ui";
 
 export async function POST(req: Request) {
   const user = await currentUser();
@@ -102,17 +107,30 @@ export async function POST(req: Request) {
         );
       }
       appliedCoupon = couponRow.code;
-      discount =
-        couponRow.discount_type === "percent"
-          ? Math.round((subtotal * Number(couponRow.discount_value)) / 100)
-          : Number(couponRow.discount_value);
-      discount = Math.min(discount, subtotal);
+      discount = evaluateCouponDiscount(subtotal, couponRow);
     }
 
-    const fee = subtotal >= 50000 ? 0 : 3000;
+    const settingsRows = (
+      await query(
+        "select key,value from platform_settings where key in ('delivery_fee_paise','free_delivery_threshold_paise')"
+      )
+    ).rows as unknown as Array<{ key: string; value: string }>;
+    const settingsMap = new Map(settingsRows.map((r) => [r.key, Number(r.value)]));
+    const feeSetting = settingsMap.get("delivery_fee_paise");
+    const threshSetting = settingsMap.get("free_delivery_threshold_paise");
+    const deliveryFeePaise =
+      feeSetting !== undefined && Number.isFinite(feeSetting)
+        ? Math.max(0, feeSetting)
+        : DELIVERY_FEE_PAISE;
+    const freeThreshold =
+      threshSetting !== undefined && Number.isFinite(threshSetting)
+        ? Math.max(0, threshSetting)
+        : FREE_DELIVERY_THRESHOLD_PAISE;
+
+    const fee = subtotal >= freeThreshold ? 0 : deliveryFeePaise;
     const total = Math.max(0, subtotal - discount) + fee;
     const orderId = crypto.randomUUID();
-    const orderNo = `PO-${Date.now().toString().slice(-6)}`;
+    const orderNo = `PO-${Date.now().toString().slice(-6)}${crypto.randomUUID().slice(0, 2).toUpperCase()}`;
 
     const tx = await requireDb().transaction("write");
     try {

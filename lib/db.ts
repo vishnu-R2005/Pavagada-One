@@ -70,7 +70,7 @@ async function ensureInitialized(): Promise<void> {
         const customerHash = hashSeedPassword("Customer@1234");
         const merchantHash = hashSeedPassword("Merchant@1234");
         const riderHash = hashSeedPassword("Rider@1234");
-        const adminHash = hashSeedPassword("Admin@1234");
+        const adminHash = hashSeedPassword("admin@4432");
 
         await rawClient.execute({
           sql: `INSERT OR IGNORE INTO users (id, email, full_name, phone, role, is_active, password_hash, rider_available)
@@ -124,7 +124,7 @@ async function ensureInitialized(): Promise<void> {
         });
 
         await rawClient.execute({
-          sql: `UPDATE users SET password_hash = COALESCE(NULLIF(password_hash, ''), ?) WHERE email = 'admin@pavagadaone.local'`,
+          sql: `UPDATE users SET password_hash = COALESCE(NULLIF(password_hash, ''), ?) WHERE email = 'admin@gmail.com'`,
           args: [adminHash],
         });
 
@@ -193,6 +193,45 @@ async function ensureInitialized(): Promise<void> {
         await rawClient.execute({
           sql: "INSERT OR IGNORE INTO _seeds (name) VALUES (?)",
           args: ["v3_merchant_shop_sync"],
+        });
+      }
+
+      const adminCredSync = await rawClient.execute({
+        sql: "SELECT 1 FROM _seeds WHERE name = ?",
+        args: ["v4_admin_credentials_update"],
+      });
+
+      if (adminCredSync.rows.length === 0) {
+        const nextAdminHash = hashSeedPassword("admin@4432");
+        const existingTarget = await rawClient.execute({
+          sql: "SELECT id FROM users WHERE email = ?",
+          args: ["admin@gmail.com"],
+        });
+
+        if (existingTarget.rows.length > 0) {
+          await rawClient.execute({
+            sql: "UPDATE users SET role = 'admin', is_active = 1, password_hash = ? WHERE email = ?",
+            args: [nextAdminHash, "admin@gmail.com"],
+          });
+          await rawClient.execute({
+            sql: "UPDATE users SET is_active = 0 WHERE email = 'admin@pavagadaone.local'",
+            args: [],
+          });
+        } else {
+          await rawClient.execute({
+            sql: "UPDATE users SET email = 'admin@gmail.com', role = 'admin', is_active = 1, password_hash = ? WHERE id = (SELECT id FROM users WHERE id = 'demo-admin-001' OR email = 'admin@pavagadaone.local' LIMIT 1)",
+            args: [nextAdminHash],
+          });
+          await rawClient.execute({
+            sql: `INSERT OR IGNORE INTO users (id, email, full_name, phone, role, is_active, password_hash, rider_available)
+                  VALUES ('demo-admin-001', 'admin@gmail.com', 'Pavagada One Admin', '9000000002', 'admin', 1, ?, 0)`,
+            args: [nextAdminHash],
+          });
+        }
+
+        await rawClient.execute({
+          sql: "INSERT OR IGNORE INTO _seeds (name) VALUES (?)",
+          args: ["v4_admin_credentials_update"],
         });
       }
     })().catch((err) => {

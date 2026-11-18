@@ -2,26 +2,100 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@/lib/auth";
 import { query } from "@/lib/db";
+import {
+  DELIVERY_FEE_PAISE,
+  evaluateCouponDiscount,
+  FREE_DELIVERY_THRESHOLD_PAISE,
+} from "@/lib/customer-ui";
+
+export const dynamic = "force-dynamic";
 
 const schema = z.object({
   productId: z.string().min(1),
   quantity: z.number().int().min(1).max(50),
 });
 
+async function getDeliverySettings() {
+  const rows = (
+    await query(
+      "select key,value from platform_settings where key in ('delivery_fee_paise','free_delivery_threshold_paise')"
+    )
+  ).rows as unknown as Array<{ key: string; value: string }>;
+  const map = new Map(rows.map((r) => [r.key, Number(r.value)]));
+  const feeRaw = map.get("delivery_fee_paise");
+  const threshRaw = map.get("free_delivery_threshold_paise");
+  return {
+    deliveryFeePaise:
+      feeRaw !== undefined && Number.isFinite(feeRaw)
+        ? Math.max(0, feeRaw)
+        : DELIVERY_FEE_PAISE,
+    freeDeliveryThresholdPaise:
+      threshRaw !== undefined && Number.isFinite(threshRaw)
+        ? Math.max(0, threshRaw)
+        : FREE_DELIVERY_THRESHOLD_PAISE,
+  };
+}
+
 export async function GET(req: Request) {
   const u = await currentUser();
+  const url = new URL(req.url);
   if (!u) {
-    const optional = new URL(req.url).searchParams.get("optional") === "1";
+    const optional = url.searchParams.get("optional") === "1";
     if (optional) {
       return NextResponse.json({ items: [], authenticated: false });
     }
     return NextResponse.json({ error: "Unauthenticated" }, { status: 401 });
   }
-  const r = await query(
-    "select c.id cart_id,c.shop_id,s.name shop_name,ci.id item_id,ci.quantity,p.id product_id,p.name,p.price_paise,p.image_url,p.unit,i.quantity available from carts c join shops s on s.id=c.shop_id left join cart_items ci on ci.cart_id=c.id left join products p on p.id=ci.product_id left join inventory i on i.product_id=p.id where c.user_id=?",
-    [u.id]
+  const [r, settings] = await Promise.all([
+    query(
+      "select c.id cart_id,c.shop_id,s.name shop_name,ci.id item_id,ci.quantity,p.id product_id,p.name,p.price_paise,p.image_url,p.unit,i.quantity available from carts c join shops s on s.id=c.shop_id left join cart_items ci on ci.cart_id=c.id left join products p on p.id=ci.product_id left join inventory i on i.product_id=p.id where c.user_id=?",
+      [u.id]
+    ),
+    getDeliverySettings(),
+  ]);
+
+  const items = r.rows.filter((x) => x.item_id);
+  const subtotal = items.reduce(
+    (sum, item) =>
+      sum + Number(item.price_paise || 0) * Number(item.quantity || 0),
+    0
   );
-  return NextResponse.json({ items: r.rows.filter((x) => x.item_id) });
+
+  let coupon:
+    | {
+        valid: boolean;
+        code: string;
+        discountPaise: number;
+        error?: string;
+      }
+    | undefined;
+  const rawCoupon = url.searchParams.get("coupon")?.trim().toUpperCase();
+  if (rawCoupon) {
+    const row = (
+      await query(
+        "select code,discount_type,discount_value from coupons where upper(code)=? and active=1",
+        [rawCoupon]
+      )
+    ).rows[0] as unknown as
+      | { code: string; discount_type: string; discount_value: number }
+      | undefined;
+    if (row) {
+      coupon = {
+        valid: true,
+        code: row.code,
+        discountPaise: evaluateCouponDiscount(subtotal, row),
+      };
+    } else {
+      coupon = {
+        valid: false,
+        code: rawCoupon,
+        discountPaise: 0,
+        error: `Coupon "${rawCoupon}" is invalid or expired.`,
+      };
+    }
+  }
+
+  return NextResponse.json({ items, settings, coupon });
 }
 
 export async function POST(req: Request) {

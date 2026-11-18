@@ -82,6 +82,10 @@ export async function PATCH(
           });
         }
       }
+      await tx.execute({
+        sql: "update delivery_assignments set status='cancelled' where order_id=? and status!='cancelled'",
+        args: [id],
+      });
       if (order.payment_status === "paid") {
         await tx.execute({
           sql: "update orders set payment_status='refunded' where id=?",

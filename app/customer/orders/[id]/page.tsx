@@ -22,6 +22,7 @@ import { ProductImage } from "@/components/product-image";
 import { apiFetch } from "@/lib/client-session";
 import {
   formatRupees,
+  formatUtcDateTime,
   getOrderTimelineIndex,
   ORDER_STEPS,
 } from "@/lib/customer-ui";
@@ -253,10 +254,10 @@ export default function OrderDetail({
                           </b>
                           {log && (
                             <p className="mt-0.5 text-[11px] text-stone-500">
-                              {new Date(log.created_at).toLocaleTimeString(
-                                "en-IN",
-                                { hour: "2-digit", minute: "2-digit" }
-                              )}
+                              {formatUtcDateTime(log.created_at, {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
                               {log.note ? ` · ${log.note}` : ""}
                             </p>
                           )}
@@ -351,10 +352,7 @@ export default function OrderDetail({
                   Order #{order.order_no}
                 </h2>
                 <p className="mt-0.5 text-xs text-stone-500">
-                  {new Date(order.created_at).toLocaleString("en-IN", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
+                  {formatUtcDateTime(order.created_at)}
                 </p>
                 <span className="mt-2.5 inline-block rounded-lg bg-[#EAF7EE] px-2.5 py-1 text-xs font-bold text-[#15803D]">
                   {statusDisplay}
@@ -409,8 +407,24 @@ export default function OrderDetail({
                       : "Free"}
                   </span>
                 </p>
+                {Number(order.subtotal_paise) +
+                  Number(order.delivery_fee_paise) -
+                  Number(order.total_paise) >
+                  0 && (
+                  <p className="flex justify-between font-semibold text-[#15803D]">
+                    <span>Promo Discount</span>
+                    <span className="tabular-nums">
+                      -
+                      {formatRupees(
+                        Number(order.subtotal_paise) +
+                          Number(order.delivery_fee_paise) -
+                          Number(order.total_paise)
+                      )}
+                    </span>
+                  </p>
+                )}
                 <p className="flex justify-between border-t border-stone-100 pt-2.5 text-sm font-extrabold text-stone-900">
-                  <span>Total Paid</span>
+                  <span>Total Payable</span>
                   <span className="tabular-nums">
                     {formatRupees(order.total_paise)}
                   </span>

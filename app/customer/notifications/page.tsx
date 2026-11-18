@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { CustomerHeader, CustomerNav } from "@/components/customer-nav";
 import { apiFetch } from "@/lib/client-session";
+import { formatUtcDateTime } from "@/lib/customer-ui";
 
 type Notice = {
   id: string;
@@ -19,9 +20,9 @@ export default function Notifications() {
 
   useEffect(() => {
     apiFetch("/api/notifications")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : { notifications: [] }))
       .then((data) => setNotifications(data.notifications ?? []));
-    void apiFetch("/api/notifications", { method: "PATCH" });
+    void apiFetch("/api/notifications", { method: "PATCH" }).catch(() => {});
   }, []);
 
   return (
@@ -55,10 +56,7 @@ export default function Notifications() {
                   {notification.body}
                 </p>
                 <small className="mt-2 block text-[11px] text-stone-400">
-                  {new Date(notification.created_at).toLocaleString("en-IN", {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
+                  {formatUtcDateTime(notification.created_at)}
                 </small>
               </div>
             </article>

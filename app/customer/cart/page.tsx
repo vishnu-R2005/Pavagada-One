@@ -22,7 +22,12 @@ import {
 import { CustomerHeader } from "@/components/customer-nav";
 import { ProductImage } from "@/components/product-image";
 import { apiFetch } from "@/lib/client-session";
-import { calculateCartTotals, formatRupees } from "@/lib/customer-ui";
+import {
+  calculateCartTotals,
+  DELIVERY_FEE_PAISE,
+  formatRupees,
+  FREE_DELIVERY_THRESHOLD_PAISE,
+} from "@/lib/customer-ui";
 
 type Item = {
   item_id: string;
@@ -78,6 +83,20 @@ export default function CartPage() {
   const [stage, setStage] = useState<Stage>("cart");
   const [note, setNote] = useState("");
   const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discountPaise: number;
+  } | null>(null);
+  const [couponFeedback, setCouponFeedback] = useState<{
+    text: string;
+    ok: boolean;
+  } | null>(null);
+  const [deliverySettings, setDeliverySettings] = useState({
+    deliveryFeePaise: DELIVERY_FEE_PAISE,
+    freeDeliveryThresholdPaise: FREE_DELIVERY_THRESHOLD_PAISE,
+  });
+  const [unauthenticated, setUnauthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -87,16 +106,63 @@ export default function CartPage() {
   const [editLandmark, setEditLandmark] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
 
-  const { subtotal, deliveryFee, total, remainingForFreeDelivery } =
-    calculateCartTotals(items);
+  const { subtotal, deliveryFee, discount, total, remainingForFreeDelivery } =
+    calculateCartTotals(
+      items,
+      appliedCoupon?.discountPaise ?? 0,
+      deliverySettings
+    );
 
-  async function load() {
+  async function load(couponOverride?: string) {
     try {
+      const codeParam = (couponOverride ?? appliedCoupon?.code ?? "").trim();
+      const cartUrl = codeParam
+        ? `/api/cart?coupon=${encodeURIComponent(codeParam)}`
+        : "/api/cart";
+      const [basketRes, placesRes] = await Promise.all([
+        apiFetch(cartUrl),
+        apiFetch("/api/addresses"),
+      ]);
+      if (basketRes.status === 401) {
+        setUnauthenticated(true);
+        setItems([]);
+        setAddresses([]);
+        setLoading(false);
+        return;
+      }
+      setUnauthenticated(false);
       const [basket, places] = await Promise.all([
-        apiFetch("/api/cart").then((r) => r.json()),
-        apiFetch("/api/addresses").then((r) => r.json()),
+        basketRes.json().catch(() => ({})),
+        placesRes.json().catch(() => ({})),
       ]);
       setItems(basket.items ?? []);
+      if (basket.settings) {
+        setDeliverySettings(basket.settings);
+      }
+      if (basket.coupon) {
+        if (basket.coupon.valid) {
+          setAppliedCoupon({
+            code: basket.coupon.code,
+            discountPaise: Number(basket.coupon.discountPaise) || 0,
+          });
+          if (couponOverride !== undefined) {
+            setCouponFeedback({
+              text: `${basket.coupon.code} applied — you save ${formatRupees(
+                Number(basket.coupon.discountPaise) || 0
+              )}.`,
+              ok: true,
+            });
+          }
+        } else {
+          setAppliedCoupon(null);
+          if (couponOverride !== undefined) {
+            setCouponFeedback({
+              text: basket.coupon.error || "Invalid coupon code.",
+              ok: false,
+            });
+          }
+        }
+      }
       setAddresses(places.addresses ?? []);
       const defaultAddress =
         (places.addresses ?? []).find((a: Address) => a.is_default) ||
@@ -104,12 +170,25 @@ export default function CartPage() {
       if (defaultAddress) setSelected((v) => v || defaultAddress.id);
     } catch {
       setNotice("Unable to load your cart.");
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
   }, []);
+
+  async function applyPromoCode() {
+    const trimmed = couponCode.trim().toUpperCase();
+    if (!trimmed) {
+      setAppliedCoupon(null);
+      setCouponFeedback(null);
+      return;
+    }
+    setCouponFeedback(null);
+    await load(trimmed);
+  }
 
   async function change(item: Item, quantity: number) {
     if (quantity < 1) {
@@ -196,7 +275,7 @@ export default function CartPage() {
           addressId: selected,
           paymentMethod: "cash_on_delivery",
           deliveryInstructions: note,
-          couponCode: couponCode.trim() || undefined,
+          couponCode: appliedCoupon?.code || couponCode.trim() || undefined,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -354,22 +433,26 @@ export default function CartPage() {
                   </div>
                 ))}
 
-                {!items.length && (
+                {!loading && !items.length && (
                   <div className="py-14 text-center">
                     <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#FFF3EE] text-[#FF5A1F]">
                       <ShoppingBag className="h-7 w-7" />
                     </div>
                     <p className="mt-3 text-base font-bold text-stone-900">
-                      Your cart is empty
+                      {unauthenticated
+                        ? "Sign in to view your cart"
+                        : "Your cart is empty"}
                     </p>
                     <p className="mt-1 text-xs text-stone-500">
-                      Add fresh groceries or essentials from Pavagada shops.
+                      {unauthenticated
+                        ? "Sign in with your Pavagada One account to add items and place orders."
+                        : "Add fresh groceries or essentials from Pavagada shops."}
                     </p>
                     <Link
-                      href="/customer/shops"
+                      href={unauthenticated ? "/sign-in" : "/customer/shops"}
                       className="mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-[#FF5A1F] px-5 py-2.5 text-sm font-bold text-white hover:bg-[#E54910]"
                     >
-                      Browse Local Shops
+                      {unauthenticated ? "Sign in" : "Browse Local Shops"}
                     </Link>
                   </div>
                 )}
@@ -704,18 +787,65 @@ export default function CartPage() {
               </p>
             )}
 
-            <label className="block rounded-2xl border border-stone-200 bg-white p-4 shadow-xs">
-              <span className="flex items-center gap-1.5 text-xs font-bold text-stone-700">
-                <Tag className="h-3.5 w-3.5 text-[#FF5A1F]" />
-                <span>Promo code (try PAVAGADA50)</span>
-              </span>
-              <input
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value)}
-                placeholder="Enter coupon code (optional)"
-                className="mt-2 w-full rounded-xl border border-stone-200 bg-[#FAFAFA] px-3.5 py-2.5 text-sm uppercase outline-none focus:border-[#FF5A1F]"
-              />
-            </label>
+            <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5">
+              <label className="block">
+                <span className="flex items-center gap-1.5 text-xs font-bold text-stone-700">
+                  <Tag className="h-3.5 w-3.5 text-[#FF5A1F]" />
+                  <span>Promo code (try PAVAGADA50)</span>
+                </span>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={couponCode}
+                    onChange={(e) => {
+                      const nextVal = e.target.value;
+                      setCouponCode(nextVal);
+                      if (!nextVal.trim()) {
+                        setAppliedCoupon(null);
+                        setCouponFeedback(null);
+                      }
+                    }}
+                    placeholder="Enter coupon code (optional)"
+                    className="flex-1 rounded-xl border border-stone-200 bg-[#FAFAFA] px-3.5 py-2.5 text-sm uppercase outline-none focus:border-[#FF5A1F]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void applyPromoCode()}
+                    className="min-h-[42px] rounded-xl border border-[#FF5A1F] bg-[#FFF8F5] px-4 py-2 text-xs font-bold text-[#FF5A1F] hover:bg-[#FFF3EE]"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </label>
+              {couponFeedback && (
+                <p
+                  className={`text-xs font-semibold ${
+                    couponFeedback.ok ? "text-[#15803D]" : "text-rose-600"
+                  }`}
+                >
+                  {couponFeedback.text}
+                </p>
+              )}
+              {discount > 0 && (
+                <div className="border-t border-stone-100 pt-2.5 space-y-1 text-xs">
+                  <p className="flex justify-between text-stone-600">
+                    <span>Item Total + Delivery</span>
+                    <span className="tabular-nums">
+                      {formatRupees(subtotal + deliveryFee)}
+                    </span>
+                  </p>
+                  <p className="flex justify-between font-semibold text-[#15803D]">
+                    <span>Promo Discount ({appliedCoupon?.code})</span>
+                    <span className="tabular-nums">
+                      -{formatRupees(discount)}
+                    </span>
+                  </p>
+                  <p className="flex justify-between font-extrabold text-stone-900">
+                    <span>Payable on Delivery</span>
+                    <span className="tabular-nums">{formatRupees(total)}</span>
+                  </p>
+                </div>
+              )}
+            </div>
 
             <label className="block rounded-2xl border border-stone-200 bg-white p-4 shadow-xs">
               <span className="text-xs font-bold text-stone-700">

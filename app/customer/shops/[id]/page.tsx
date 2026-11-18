@@ -55,6 +55,7 @@ export default function ShopPage({
   const [conflictProductId, setConflictProductId] = useState<string | null>(null);
   const [cartCount, setCartCount] = useState(0);
   const [fav, setFav] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   async function load(id: string) {
     try {
@@ -76,6 +77,8 @@ export default function ShopPage({
       );
     } catch {
       setNotice({ text: "Unable to load this shop.", tone: "err" });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -144,12 +147,33 @@ export default function ShopPage({
     [products, category]
   );
 
-  if (!shop) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-[#FAFAFA] text-stone-900">
         <CustomerHeader cartCount={cartCount} title="Shop" backHref="/customer/shops" />
         <main className="grid min-h-[60vh] place-items-center text-sm text-stone-500">
           Loading shop…
+        </main>
+      </div>
+    );
+  }
+
+  if (!shop) {
+    return (
+      <div className="min-h-screen bg-[#FAFAFA] text-stone-900">
+        <CustomerHeader cartCount={cartCount} title="Shop Not Found" backHref="/customer/shops" />
+        <main className="grid min-h-[60vh] place-items-center px-5 text-center">
+          <div className="space-y-3">
+            <p className="text-base font-bold text-stone-900">
+              Shop is currently unavailable
+            </p>
+            <Link
+              href="/customer/shops"
+              className="inline-flex min-h-[44px] items-center rounded-xl bg-[#FF5A1F] px-5 py-2.5 text-sm font-bold text-white"
+            >
+              Browse Local Shops
+            </Link>
+          </div>
         </main>
       </div>
     );

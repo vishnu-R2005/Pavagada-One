@@ -3,6 +3,8 @@ import { z } from "zod";
 import { currentUser, audit } from "@/lib/auth";
 import { query } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 const imageUrlSchema = z
   .string()
   .trim()

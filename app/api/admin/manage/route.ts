@@ -71,11 +71,18 @@ export async function POST(req: Request) {
     try {
       const ord = (
         await tx.execute({
-          sql: "select id,order_no,status,customer_id from orders where id=?",
+          sql: "select id,order_no,status,customer_id,payment_method,payment_status from orders where id=?",
           args: [id],
         })
       ).rows[0] as unknown as
-        | { id: string; order_no: string; status: string; customer_id: string }
+        | {
+            id: string;
+            order_no: string;
+            status: string;
+            customer_id: string;
+            payment_method: string;
+            payment_status: string;
+          }
         | undefined;
       if (!ord) throw new Error("Order not found");
 
@@ -91,6 +98,42 @@ export async function POST(req: Request) {
               args: [item.quantity as number, item.product_id as string],
             });
           }
+        }
+        await tx.execute({
+          sql: "update delivery_assignments set status='cancelled' where order_id=? and status!='cancelled'",
+          args: [id],
+        });
+        if (ord.payment_status === "paid") {
+          await tx.execute({
+            sql: "update orders set payment_status='refunded' where id=?",
+            args: [id],
+          });
+          await tx.execute({
+            sql: "update payments set status='refunded' where order_id=?",
+            args: [id],
+          });
+        } else {
+          await tx.execute({
+            sql: "update payments set status='cancelled' where order_id=? and status='pending'",
+            args: [id],
+          });
+        }
+      }
+
+      if (p.data.action === "delivered") {
+        await tx.execute({
+          sql: "update delivery_assignments set status='delivered',delivered_at=coalesce(delivered_at,CURRENT_TIMESTAMP) where order_id=? and status!='cancelled'",
+          args: [id],
+        });
+        if (ord.payment_method === "cash_on_delivery") {
+          await tx.execute({
+            sql: "update orders set payment_status='paid' where id=?",
+            args: [id],
+          });
+          await tx.execute({
+            sql: "update payments set status='paid' where order_id=?",
+            args: [id],
+          });
         }
       }
 
@@ -141,16 +184,19 @@ export async function POST(req: Request) {
     try {
       const ord = (
         await tx.execute({
-          sql: "select id,order_no,customer_id from orders where id=?",
+          sql: "select id,order_no,status,customer_id from orders where id=?",
           args: [id],
         })
       ).rows[0] as unknown as
-        | { id: string; order_no: string; customer_id: string }
+        | { id: string; order_no: string; status: string; customer_id: string }
         | undefined;
       if (!ord) throw new Error("Order not found");
+      if (ord.status === "delivered" || ord.status === "cancelled") {
+        throw new Error(`Cannot assign a rider to a ${ord.status} order.`);
+      }
 
       await tx.execute({
-        sql: "insert into delivery_assignments(id,order_id,rider_id,assigned_by,status) values(?,?,?,?,?) on conflict(order_id) do update set rider_id=excluded.rider_id,assigned_by=excluded.assigned_by,status='assigned',assigned_at=CURRENT_TIMESTAMP",
+        sql: "insert into delivery_assignments(id,order_id,rider_id,assigned_by,status) values(?,?,?,?,?) on conflict(order_id) do update set rider_id=excluded.rider_id,assigned_by=excluded.assigned_by,status='assigned',assigned_at=CURRENT_TIMESTAMP,delivered_at=NULL",
         args: [crypto.randomUUID(), id, riderId, a.id, "assigned"],
       });
       await tx.execute({

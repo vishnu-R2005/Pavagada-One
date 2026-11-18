@@ -191,6 +191,10 @@ function RoutePolyline({
   return null;
 }
 
+function isValidGoogleMapsKey(key: string): boolean {
+  return /^AIza[0-9A-Za-z_-]{20,}$/.test(key.trim());
+}
+
 export function PavagadaMap({
   markers,
   center = PAVAGADA_COORDS["Pavagada Town"],
@@ -210,12 +214,10 @@ export function PavagadaMap({
   routeDestination?: { lat: number; lng: number };
   heightClass?: string;
 }) {
-  const [apiKey, setApiKey] = useState<string>(
-    (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY as string) || ""
-  );
-  const [loaded, setLoaded] = useState(
-    Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY)
-  );
+  const envKey = (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY as string) || "";
+  const initialValidKey = isValidGoogleMapsKey(envKey) ? envKey.trim() : "";
+  const [apiKey, setApiKey] = useState<string>(initialValidKey);
+  const [loaded, setLoaded] = useState(Boolean(initialValidKey));
   const [mapError, setMapError] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [routeSummary, setRouteSummary] = useState<{
@@ -228,7 +230,9 @@ export function PavagadaMap({
     fetch("/api/maps/config")
       .then((r) => r.json())
       .then((d) => {
-        if (d.apiKey) setApiKey(d.apiKey);
+        if (d.apiKey && isValidGoogleMapsKey(String(d.apiKey))) {
+          setApiKey(String(d.apiKey).trim());
+        }
       })
       .catch(() => {})
       .finally(() => setLoaded(true));

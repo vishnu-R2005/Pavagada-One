@@ -38,7 +38,9 @@ export default function Admin() {
   const [orderCustomDate, setOrderCustomDate] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [couponCode, setCouponCode] = useState("");
-  const [couponValue, setCouponValue] = useState("5000");
+  const [couponRupees, setCouponRupees] = useState("50");
+  const [deliveryFeeRupees, setDeliveryFeeRupees] = useState("30");
+  const [freeThresholdRupees, setFreeThresholdRupees] = useState("500");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -53,6 +55,15 @@ export default function Admin() {
       if (!response.ok)
         throw new Error(body.error || "Unable to load admin operations.");
       setData(body);
+      const rows = (body.settings ?? []) as Array<{ key: string; value: string }>;
+      const feeRow = rows.find((r) => r.key === "delivery_fee_paise");
+      const freeRow = rows.find((r) => r.key === "free_delivery_threshold_paise");
+      if (feeRow && Number.isFinite(Number(feeRow.value))) {
+        setDeliveryFeeRupees(String(Math.round(Number(feeRow.value) / 100)));
+      }
+      if (freeRow && Number.isFinite(Number(freeRow.value))) {
+        setFreeThresholdRupees(String(Math.round(Number(freeRow.value) / 100)));
+      }
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -109,8 +120,52 @@ export default function Admin() {
   async function addCoupon(e: FormEvent) {
     e.preventDefault();
     if (!couponCode.trim()) return;
-    await act("coupon", couponCode.trim().toUpperCase(), "flat", Number(couponValue));
+    const discountPaise = Math.max(0, Math.round(Number(couponRupees) * 100));
+    if (!Number.isFinite(discountPaise) || discountPaise <= 0) {
+      setMessage("Enter a valid coupon discount amount in ₹.");
+      return;
+    }
+    await act("coupon", couponCode.trim().toUpperCase(), "flat", discountPaise);
     setCouponCode("");
+  }
+
+  async function saveDeliverySettings(e: FormEvent) {
+    e.preventDefault();
+    const feePaise = Math.max(0, Math.round(Number(deliveryFeeRupees) * 100));
+    const thresholdPaise = Math.max(
+      0,
+      Math.round(Number(freeThresholdRupees) * 100)
+    );
+    if (!Number.isFinite(feePaise) || !Number.isFinite(thresholdPaise)) {
+      setMessage("Enter valid delivery fee numbers.");
+      return;
+    }
+    const r1 = await apiFetch("/api/admin/manage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "setting",
+        id: "delivery_fee_paise",
+        action: "update",
+        value: String(feePaise),
+      }),
+    });
+    const r2 = await apiFetch("/api/admin/manage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "setting",
+        id: "free_delivery_threshold_paise",
+        action: "update",
+        value: String(thresholdPaise),
+      }),
+    });
+    setMessage(
+      r1.ok && r2.ok
+        ? "Delivery settings updated."
+        : "Unable to save delivery settings."
+    );
+    await load();
   }
 
   async function logout() {
@@ -432,14 +487,17 @@ export default function Admin() {
                         : "No rider assigned"}{" "}
                       ·{" "}
                       {order.created_at
-                        ? new Date(
-                            String(order.created_at).endsWith("Z")
-                              ? order.created_at
-                              : `${order.created_at}Z`
-                          ).toLocaleDateString("en-IN", {
-                            day: "2-digit",
-                            month: "short",
-                          })
+                        ? (() => {
+                            const raw = String(order.created_at).trim();
+                            const iso =
+                              !raw.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(raw)
+                                ? `${raw.replace(" ", "T")}Z`
+                                : raw;
+                            return new Date(iso).toLocaleDateString("en-IN", {
+                              day: "2-digit",
+                              month: "short",
+                            });
+                          })()
                         : ""}
                     </p>
                   </div>
@@ -448,11 +506,15 @@ export default function Admin() {
                     <select
                       aria-label={`Assign rider for ${order.order_no}`}
                       value={order.rider_id ?? ""}
+                      disabled={
+                        order.status === "delivered" ||
+                        order.status === "cancelled"
+                      }
                       onChange={(e) => {
                         if (e.target.value)
                           void act("delivery", order.id, "assign", e.target.value);
                       }}
-                      className="rounded-xl border border-[#14221B]/15 bg-[#FAF8F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#0F5132]"
+                      className="rounded-xl border border-[#14221B]/15 bg-[#FAF8F5] px-3 py-2 text-xs font-medium outline-none focus:border-[#0F5132] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <option value="">Assign rider…</option>
                       {riders.map((r: any) => (
@@ -691,13 +753,53 @@ export default function Admin() {
                   />
                   <input
                     type="number"
-                    value={couponValue}
-                    onChange={(e) => setCouponValue(e.target.value)}
-                    placeholder="Paise"
+                    min="1"
+                    value={couponRupees}
+                    onChange={(e) => setCouponRupees(e.target.value)}
+                    placeholder="₹ Off"
+                    aria-label="Coupon discount in Rupees"
                     className="w-24 rounded-xl border border-[#14221B]/15 px-3 py-2 text-xs outline-none focus:border-[#0F5132]"
                   />
                   <button className="rounded-xl bg-[#0F5132] px-3.5 py-2 text-xs font-semibold text-white">
                     Create
+                  </button>
+                </form>
+              </section>
+
+              <section className="rounded-2xl border border-[#14221B]/10 bg-white p-5">
+                <h2 className="text-base font-semibold">Delivery Settings</h2>
+                <p className="mt-0.5 text-xs text-[#14221B]/55">
+                  Applies immediately across customer cart and checkout.
+                </p>
+                <form
+                  onSubmit={saveDeliverySettings}
+                  className="mt-4 grid grid-cols-2 gap-3"
+                >
+                  <label className="text-xs font-medium text-[#14221B]/75">
+                    <span>Delivery Fee (₹)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={deliveryFeeRupees}
+                      onChange={(e) => setDeliveryFeeRupees(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-[#14221B]/15 px-3 py-2 text-xs outline-none focus:border-[#0F5132]"
+                    />
+                  </label>
+                  <label className="text-xs font-medium text-[#14221B]/75">
+                    <span>Free Delivery Above (₹)</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={freeThresholdRupees}
+                      onChange={(e) => setFreeThresholdRupees(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-[#14221B]/15 px-3 py-2 text-xs outline-none focus:border-[#0F5132]"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="col-span-2 min-h-[38px] rounded-xl bg-[#0F5132] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0B3F27]"
+                  >
+                    Save Delivery Settings
                   </button>
                 </form>
               </section>

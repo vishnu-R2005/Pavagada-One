@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ChevronRight, Package, ShoppingBag, Store } from "lucide-react";
 import { CustomerHeader, CustomerNav } from "@/components/customer-nav";
 import { apiFetch } from "@/lib/client-session";
-import { formatRupees } from "@/lib/customer-ui";
+import { formatRupees, formatUtcDateTime } from "@/lib/customer-ui";
 
 type Order = {
   id: string;
@@ -126,11 +126,7 @@ export default function Orders() {
                         {order.shop_name}
                       </p>
                       <p className="mt-0.5 font-mono text-[11px] text-stone-500">
-                        {order.order_no} ·{" "}
-                        {new Date(order.created_at).toLocaleString("en-IN", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
+                        {order.order_no} · {formatUtcDateTime(order.created_at)}
                       </p>
                     </div>
                   </div>

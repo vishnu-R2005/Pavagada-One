@@ -49,7 +49,11 @@ function statusBadgeClass(status: string): string {
 }
 
 function formatOrderTimestamp(raw: string): string {
-  const normalized = raw.endsWith("Z") ? raw : `${raw}Z`;
+  const trimmed = String(raw || "").trim();
+  const normalized =
+    !trimmed.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(trimmed)
+      ? `${trimmed.replace(" ", "T")}Z`
+      : trimmed;
   const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return raw;
   return d.toLocaleString("en-IN", {
@@ -559,7 +563,7 @@ export function MerchantOrderDetailView({
         {/* Bill & Earnings Breakdown */}
         <div className="mt-5 space-y-2 border-t border-stone-100 pt-4 text-sm">
           <div className="flex items-center justify-between text-stone-600">
-            <span>Item Total</span>
+            <span>Order Total</span>
             <span className="tabular-nums font-semibold text-stone-900">
               {formatRupees(gross)}
             </span>

@@ -36,7 +36,7 @@ export async function POST(
     if (!row) throw new Error("This delivery is no longer available.");
 
     await tx.execute({
-      sql: "insert into delivery_assignments(id,order_id,rider_id,assigned_by,status) values(?,?,?,?,?) on conflict(order_id) do update set rider_id=excluded.rider_id,assigned_by=excluded.assigned_by,status='assigned',assigned_at=CURRENT_TIMESTAMP",
+      sql: "insert into delivery_assignments(id,order_id,rider_id,assigned_by,status) values(?,?,?,?,?) on conflict(order_id) do update set rider_id=excluded.rider_id,assigned_by=excluded.assigned_by,status='assigned',assigned_at=CURRENT_TIMESTAMP,delivered_at=NULL",
       args: [crypto.randomUUID(), id, rider.id, rider.id, "assigned"],
     });
     await tx.execute({

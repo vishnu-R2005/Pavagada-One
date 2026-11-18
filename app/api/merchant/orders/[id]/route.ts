@@ -2,6 +2,8 @@ import {NextResponse} from "next/server";
 import {currentUser} from "@/lib/auth";
 import {query} from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(_:Request,{params}:{params:Promise<{id:string}>}){
   const u=await currentUser();
   if(!u||u.role!=="merchant")return NextResponse.json({error:"Forbidden"},{status:403});

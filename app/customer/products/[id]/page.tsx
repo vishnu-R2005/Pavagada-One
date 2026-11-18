@@ -31,28 +31,33 @@ export default function ProductDetail({
   );
   const [cartCount, setCartCount] = useState(0);
   const [fav, setFav] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     params.then(async (value) => {
-      const [catalog, cart] = await Promise.all([
-        apiFetch("/api/catalog").then((r) => r.json()),
-        apiFetch("/api/cart?optional=1").then((r) => r.json()).catch(() => ({ items: [] })),
-      ]);
-      const found =
-        (catalog.products ?? []).find(
-          (item: Product) => item.id === value.id
-        ) ?? null;
-      setProduct(found);
-      setCartCount(
-        (cart.items ?? []).reduce(
-          (s: number, i: { quantity: number }) => s + Number(i.quantity),
-          0
-        )
-      );
-      const saved = JSON.parse(
-        window.localStorage.getItem("pavagada_fav_products") || "[]"
-      ) as string[];
-      setFav(saved.includes(value.id));
+      try {
+        const [catalog, cart] = await Promise.all([
+          apiFetch("/api/catalog").then((r) => r.json()),
+          apiFetch("/api/cart?optional=1").then((r) => r.json()).catch(() => ({ items: [] })),
+        ]);
+        const found =
+          (catalog.products ?? []).find(
+            (item: Product) => item.id === value.id
+          ) ?? null;
+        setProduct(found);
+        setCartCount(
+          (cart.items ?? []).reduce(
+            (s: number, i: { quantity: number }) => s + Number(i.quantity),
+            0
+          )
+        );
+        const saved = JSON.parse(
+          window.localStorage.getItem("pavagada_fav_products") || "[]"
+        ) as string[];
+        setFav(saved.includes(value.id));
+      } finally {
+        setLoading(false);
+      }
     });
   }, [params]);
 
@@ -90,12 +95,33 @@ export default function ProductDetail({
     });
   }
 
-  if (!product) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-[#FAFAFA] text-stone-900">
         <CustomerHeader cartCount={cartCount} title="Product" backHref="/customer" />
         <main className="grid min-h-[60vh] place-items-center text-sm text-stone-500">
           Loading product…
+        </main>
+      </div>
+    );
+  }
+
+  if (!product) {
+    return (
+      <div className="min-h-screen bg-[#FAFAFA] text-stone-900">
+        <CustomerHeader cartCount={cartCount} title="Product Unavailable" backHref="/customer" />
+        <main className="grid min-h-[60vh] place-items-center px-5 text-center">
+          <div className="space-y-3">
+            <p className="text-base font-bold text-stone-900">
+              Product is unavailable or out of stock
+            </p>
+            <Link
+              href="/customer"
+              className="inline-flex min-h-[44px] items-center rounded-xl bg-[#FF5A1F] px-5 py-2.5 text-sm font-bold text-white"
+            >
+              Back to Storefront
+            </Link>
+          </div>
         </main>
       </div>
     );

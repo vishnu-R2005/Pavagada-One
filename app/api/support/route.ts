@@ -3,6 +3,8 @@ import { z } from "zod";
 import { currentUser } from "@/lib/auth";
 import { query } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 const createSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("support"),

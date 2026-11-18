@@ -87,20 +87,17 @@ export async function apiFetch(
   }
 
   const token = readSessionToken();
-  let nextInit = init;
-
-  if (token) {
-    const headers = new Headers(
-      init?.headers ?? (input instanceof Request ? input.headers : undefined)
-    );
-    if (!headers.has("authorization")) {
-      headers.set("authorization", `Bearer ${token}`);
-    }
-    nextInit = {
-      ...init,
-      headers,
-    };
+  const headers = new Headers(
+    init?.headers ?? (input instanceof Request ? input.headers : undefined)
+  );
+  if (token && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
   }
+  const nextInit: RequestInit = {
+    cache: "no-store",
+    ...init,
+    headers,
+  };
 
   const response = await nativeFetch(input, nextInit);
 
